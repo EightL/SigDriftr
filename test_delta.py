@@ -110,12 +110,18 @@ def test_compute_drift_uses_weighted_segment_profiles() -> None:
         assert profile_by_segment["young_urban"]["concern_level"] == 0.8
         assert profile_by_segment["family"]["purchase_intent"] == 0.9
         assert profile_by_segment["senior"]["article_count"] == 0
+        assert profile_by_segment["young_urban"]["window_days"] == 7
 
         drift = compute_drift("inflace")
         drift_by_segment = {entry["segment"]: entry for entry in drift}
         assert drift_by_segment["young_urban"]["deltas"]["concern_level"] == 0.42
         assert drift_by_segment["family"]["frame_shift"] is True
-        assert drift_by_segment["senior"]["alert_level"] == "strong"
+        assert drift_by_segment["senior"]["alert_level"] == "no_data"
+        assert drift_by_segment["senior"]["deltas"] == {
+            "concern_level": 0.0,
+            "purchase_intent": 0.0,
+            "avoidance_signals": 0.0,
+        }
     finally:
         temp_dir.cleanup()
 
@@ -172,6 +178,105 @@ def test_compute_drift_seeds_unknown_topics_on_demand() -> None:
         temp_dir.cleanup()
 
 
+def test_compute_segment_profiles_persists_requested_window_days() -> None:
+    temp_dir = setup_temp_db()
+    try:
+        insert_article_with_signal(
+            article_id="window-test",
+            topic="inflace",
+            concern=0.4,
+            purchase=0.3,
+            avoidance=0.2,
+            frame="neutral",
+            seg_young_urban=1.0,
+            seg_family=0.0,
+            seg_senior=0.0,
+            seg_b2b=0.0,
+        )
+
+        compute_segment_profiles("inflace", days_back=14)
+
+        conn = db.init.get_conn()
+        row = conn.execute(
+            """
+            SELECT window_days
+            FROM segment_profiles
+            WHERE topic = ? AND segment = ?
+            """,
+            ("inflace", "young_urban"),
+        ).fetchone()
+
+        assert row == (14,)
+    finally:
+        temp_dir.cleanup()
+
+
+def test_frame_shift_uses_canonical_frame_labels() -> None:
+    temp_dir = setup_temp_db()
+    try:
+        seed_baselines(["custom-topic"])
+        insert_article_with_signal(
+            article_id="frame-test",
+            topic="custom-topic",
+            concern=0.7,
+            purchase=0.2,
+            avoidance=0.4,
+            frame="concern",
+            seg_young_urban=0.0,
+            seg_family=0.0,
+            seg_senior=1.0,
+            seg_b2b=0.0,
+        )
+
+        drift = compute_drift("custom-topic")
+        senior = next(entry for entry in drift if entry["segment"] == "senior")
+        assert senior["dominant_frame"] == "fear"
+        assert senior["baseline_frame"] == "fear"
+        assert senior["frame_shift"] is False
+    finally:
+        temp_dir.cleanup()
+
+
+def test_alert_level_uses_drift_magnitude() -> None:
+    temp_dir = setup_temp_db()
+    try:
+        seed_baselines(["inflace"])
+        insert_article_with_signal(
+            article_id="magnitude-test",
+            topic="inflace",
+            concern=0.56,
+            purchase=0.49,
+            avoidance=0.36,
+            frame="opportunity",
+            seg_young_urban=1.0,
+            seg_family=0.0,
+            seg_senior=0.0,
+            seg_b2b=0.0,
+        )
+
+        drift = compute_drift("inflace")
+        young_urban = next(entry for entry in drift if entry["segment"] == "young_urban")
+        assert young_urban["drift_magnitude"] == 0.54
+        assert young_urban["alert_level"] == "strong"
+    finally:
+        temp_dir.cleanup()
+
+
+def test_empty_window_returns_no_data_alerts() -> None:
+    temp_dir = setup_temp_db()
+    try:
+        seed_baselines(["inflace"])
+
+        drift = compute_drift("inflace")
+
+        assert len(drift) == 4
+        assert all(entry["alert_level"] == "no_data" for entry in drift)
+        assert all(entry["drift_magnitude"] == 0.0 for entry in drift)
+        assert all(entry["has_data"] is False for entry in drift)
+    finally:
+        temp_dir.cleanup()
+
+
 def main() -> int:
     try:
         from extraction.extractor import run_extraction
@@ -220,7 +325,7 @@ def main() -> int:
             f"alert={entry['alert_level']:6} "
             f"frame_shift={entry['frame_shift']}"
         )
-        assert entry["alert_level"] in ("none", "mild", "strong")
+        assert entry["alert_level"] in ("none", "mild", "strong", "no_data")
         assert entry["baseline"] is not None
 
     print("\nAll delta engine checks passed.")

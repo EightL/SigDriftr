@@ -6,6 +6,34 @@ from db.init import get_conn
 
 SEGMENTS = ["young_urban", "family", "senior", "b2b"]
 SIGNAL_KEYS = ["concern_level", "purchase_intent", "avoidance_signals"]
+FRAME_ALIASES = {
+    "alert": "fear",
+    "anxiety": "fear",
+    "concern": "fear",
+    "fear": "fear",
+    "risk": "fear",
+    "threat": "fear",
+    "benefit": "opportunity",
+    "growth": "opportunity",
+    "opportunity": "opportunity",
+    "solution": "opportunity",
+    "controversy": "conflict",
+    "conflict": "conflict",
+    "debate": "conflict",
+    "dispute": "conflict",
+    "explanatory": "neutral",
+    "informational": "neutral",
+    "mixed": "neutral",
+    "neutral": "neutral",
+}
+
+
+def canonicalize_frame(frame: str | None) -> str:
+    if not frame:
+        return "neutral"
+
+    normalized = frame.strip().lower().replace("-", "_").replace(" ", "_")
+    return FRAME_ALIASES.get(normalized, normalized)
 
 
 def _window_start(days_back: int = 7) -> str:
@@ -54,7 +82,7 @@ def compute_segment_profiles(topic: str, days_back: int = 7) -> list[dict]:
             for idx, key in enumerate(SIGNAL_KEYS):
                 signal_value = row[idx] or 0.0
                 weighted_signals[key] += signal_value * weight
-            frame = row[3] or "neutral"
+            frame = canonicalize_frame(row[3])
             frame_counts[frame] = frame_counts.get(frame, 0.0) + weight
 
         if total_weight > 0:
@@ -77,13 +105,14 @@ def compute_segment_profiles(topic: str, days_back: int = 7) -> list[dict]:
             (id, topic, segment, window_start, window_days,
              concern_level, purchase_intent, avoidance_signals,
              dominant_frame, article_count, computed_at)
-            VALUES (?, ?, ?, ?, 7, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 profile_id,
                 topic,
                 segment,
                 window_start_str,
+                days_back,
                 profile_signals["concern_level"],
                 profile_signals["purchase_intent"],
                 profile_signals["avoidance_signals"],
@@ -98,6 +127,7 @@ def compute_segment_profiles(topic: str, days_back: int = 7) -> list[dict]:
                 "segment": segment,
                 "topic": topic,
                 "window_start": window_start_str,
+                "window_days": days_back,
                 "article_count": article_count,
                 **profile_signals,
                 "dominant_frame": dominant_frame,

@@ -22,6 +22,24 @@ _CONN.execute(
     );
     """
 )
+_CONN.execute(
+    """
+    CREATE TABLE IF NOT EXISTS signals (
+        article_id         TEXT PRIMARY KEY,
+        concern_level      REAL,
+        purchase_intent    REAL,
+        avoidance_signals  REAL,
+        dominant_frame     TEXT,
+        seg_young_urban    REAL,
+        seg_family         REAL,
+        seg_senior         REAL,
+        seg_b2b            REAL,
+        raw_json           TEXT,
+        extracted_at       TEXT NOT NULL,
+        FOREIGN KEY (article_id) REFERENCES articles(id)
+    );
+    """
+)
 _CONN.commit()
 
 

@@ -1,3 +1,6 @@
 feedparser
 fastapi
+ollama
+torch
+transformers
 uvicorn[standard]

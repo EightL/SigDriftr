@@ -30,7 +30,22 @@ FEEDS = [
         "affinity_tag": "senior",
     },
     {
-        "outlet": "ct24",
+        "outlet": "ct24_main",
+        "rss_url": "https://www.ceskatelevize.cz/rss/",
+        "affinity_tag": "mainstream",
+    },
+    {
+        "outlet": "ct24_sport",
+        "rss_url": "https://www.ceskatelevize.cz/rss/",
+        "affinity_tag": "mainstream",
+    },
+    {
+        "outlet": "ct24_brno",
+        "rss_url": "https://www.ceskatelevize.cz/rss/",
+        "affinity_tag": "mainstream",
+    },
+    {
+        "outlet": "ct24_ostrava",
         "rss_url": "https://www.ceskatelevize.cz/rss/",
         "affinity_tag": "mainstream",
     },

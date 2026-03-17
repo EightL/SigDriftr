@@ -38,13 +38,18 @@
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
         <mxCell id="kRrC1JLjPS0zl6RTnzES-10" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="LLM Extraction" vertex="1">
-          <mxGeometry height="60" width="120" x="250" y="550" as="geometry" />
+          <mxGeometry height="60" width="120" x="250" y="555" as="geometry" />
         </mxCell>
         <mxCell id="kRrC1JLjPS0zl6RTnzES-16" edge="1" parent="1" source="kRrC1JLjPS0zl6RTnzES-14" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0;entryY=0.25;entryDx=0;entryDy=0;" target="kRrC1JLjPS0zl6RTnzES-10">
-          <mxGeometry relative="1" as="geometry" />
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="230" y="570" />
+              <mxPoint x="230" y="570" />
+            </Array>
+          </mxGeometry>
         </mxCell>
         <mxCell id="kRrC1JLjPS0zl6RTnzES-14" parent="1" style="rounded=0;whiteSpace=wrap;html=1;" value="Article summary" vertex="1">
-          <mxGeometry height="30" width="70" x="80" y="550" as="geometry" />
+          <mxGeometry height="30" width="70" x="95" y="565" as="geometry" />
         </mxCell>
         <mxCell id="kRrC1JLjPS0zl6RTnzES-23" edge="1" parent="1" source="kRrC1JLjPS0zl6RTnzES-17" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" target="kRrC1JLjPS0zl6RTnzES-20">
           <mxGeometry relative="1" as="geometry" />

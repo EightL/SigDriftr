@@ -22,13 +22,12 @@ def run_extraction(topic: str) -> int:
     ).fetchall()
 
     processed = 0
-    extracted_at = datetime.now(timezone.utc).isoformat()
-
     for article_id, title, summary, outlet in rows:
         affinity_tag = _OUTLET_AFFINITY.get(outlet, "mainstream")
         signals = extract_signals(
             title or "", summary or "", affinity_tag=affinity_tag
         )
+        extracted_at = datetime.now(timezone.utc).isoformat()
         conn.execute(
             """
             INSERT OR IGNORE INTO signals
@@ -53,5 +52,4 @@ def run_extraction(topic: str) -> int:
         )
         processed += 1
 
-    conn.commit()
     return processed

@@ -76,6 +76,4 @@ def crawl(topic: str) -> int:
             )
             inserted += cursor.rowcount
 
-        conn.commit()
-
     return inserted

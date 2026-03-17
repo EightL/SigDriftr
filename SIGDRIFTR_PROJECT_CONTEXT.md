@@ -18,9 +18,10 @@ SigDriftr is a real-time behavioral signal extraction pipeline that watches Czec
 
 6. **FastAPI** — Exposes all stages via clean endpoints:
    POST /collect?topic=...
-   GET  /signals/{topic}
+   GET  /signals?topic=...
    GET  /calibration/{topic}/{segment}
    GET  /brief/{topic}
+   GET  /health
 
 ## Tech Stack
 - Python 3.11+

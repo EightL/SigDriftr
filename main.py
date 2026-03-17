@@ -1,25 +1,30 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 
 import db.init
 from api.routes.brief import router as brief_router
 from api.routes.calibration import router as calibration_router
 from api.routes.collect import router as collect_router
+from api.routes.health import router as health_router
 from api.routes.signals import router as signals_router
 from delta.seeder import seed_baselines
 
 
-app = FastAPI(title="SigDriftr")
-
-
-@app.on_event("startup")
-def startup() -> None:
+@asynccontextmanager
+async def lifespan(app: FastAPI):
     db.init.get_conn()
     seeded = seed_baselines()
     if seeded:
         print(f"[SigDriftr] Seeded {seeded} baseline rows.")
+    yield
+
+
+app = FastAPI(title="SigDriftr", lifespan=lifespan)
 
 
 app.include_router(collect_router, prefix="")
 app.include_router(signals_router, prefix="")
 app.include_router(calibration_router, prefix="")
 app.include_router(brief_router, prefix="")
+app.include_router(health_router, prefix="")

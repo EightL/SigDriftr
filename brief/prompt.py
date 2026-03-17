@@ -51,34 +51,18 @@ def build_context_block(drift_results: list[dict], top_articles: list[dict]) -> 
     return "\n".join(lines)
 
 
-PASS1_TEMPLATE = """You are an expert media analyst. Your task is to reason carefully about behavioral drift signals extracted from Czech news media.
+BRIEF_TEMPLATE = """You are a Lakmoos AI research analyst writing a calibration brief.
 
 Topic: {topic}
 Date: {date}
 
 {context_block}
 
-## Your Task
-Think step by step:
-1. Which segment shows the strongest behavioral shift? Why?
-2. What type of drift is this? (concern_spike / purchase_surge / avoidance_rise / frame_shift / mixed / stable)
-3. What behavioral mechanism connects the news framing to the audience's likely response? Be specific.
-4. For each of the 3 most affected segments, what is one testable behavioral hypothesis a market researcher could verify?
-
-Reason through each point before concluding. Be concise."""
-
-
-PASS2_TEMPLATE = """You are a Lakmoos AI research analyst writing a calibration brief.
-
-Topic: {topic}
-
-{context_block}
-
-## Analyst Reasoning (use this as evidence)
-{reasoning}
-
 ## Output Instructions
-Produce ONLY a valid JSON object matching this exact schema. No markdown, no explanation outside the JSON:
+Return ONLY valid JSON matching this exact schema. No markdown, no prose outside the JSON.
+Reason from the evidence in the drift summary and representative article snippets.
+Choose the most affected segment based on drift magnitude, alert level, and article grounding.
+Write exactly 3 hypotheses covering the most relevant segments.
 
 {{
   "topic": "{topic}",
@@ -110,4 +94,3 @@ Produce ONLY a valid JSON object matching this exact schema. No markdown, no exp
   "generated_at": "{date}",
   "model_used": "{model}"
 }}"""
-

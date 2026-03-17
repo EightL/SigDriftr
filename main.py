@@ -1,6 +1,8 @@
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 
 import db.init
 from api.routes.brief import router as brief_router
@@ -28,3 +30,8 @@ app.include_router(signals_router, prefix="")
 app.include_router(calibration_router, prefix="")
 app.include_router(brief_router, prefix="")
 app.include_router(health_router, prefix="")
+app.mount(
+    "/ui",
+    StaticFiles(directory=Path(__file__).parent / "static", html=True),
+    name="ui",
+)

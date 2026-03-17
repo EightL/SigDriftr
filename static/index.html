@@ -1,0 +1,948 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SigDriftr</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Instrument+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #f5f2ea;
+      --panel: #fffdf8;
+      --panel-alt: #f0eadf;
+      --text: #1d221d;
+      --muted: #6e746d;
+      --border: #d6d1c5;
+      --accent: #1f7a4d;
+      --accent-soft: #e6f1ea;
+      --danger: #b44535;
+      --warning: #b87a18;
+      --cool: #3b6fb6;
+      --grid: #d9d4c7;
+    }
+
+    * {
+      box-sizing: border-box;
+      border-radius: 0;
+    }
+
+    html, body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+    }
+
+    body {
+      padding: 32px 24px 48px;
+      font-family: "Instrument Sans", sans-serif;
+    }
+
+    .app {
+      max-width: 980px;
+      margin: 0 auto;
+    }
+
+    .header {
+      display: flex;
+      justify-content: space-between;
+      gap: 20px;
+      align-items: center;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 18px;
+      margin-bottom: 32px;
+    }
+
+    .brand {
+      color: var(--text);
+      font-size: 22px;
+      letter-spacing: 0.08em;
+      font-weight: 600;
+    }
+
+    .health {
+      color: var(--muted);
+      font-size: 12px;
+      text-align: right;
+      white-space: normal;
+      font-family: "IBM Plex Mono", monospace;
+    }
+
+    .health .ok,
+    .value {
+      color: var(--accent);
+    }
+
+    .health .error {
+      color: var(--danger);
+    }
+
+    .health .warn {
+      color: var(--warning);
+    }
+
+    section {
+      margin-bottom: 34px;
+    }
+
+    .section-title {
+      margin: 0 0 12px 0;
+      color: var(--muted);
+      font-size: 11px;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      font-weight: 600;
+    }
+
+    .topic-row,
+    .chart-controls {
+      display: flex;
+      gap: 14px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    .topic-label,
+    .select-label {
+      color: var(--text);
+      white-space: nowrap;
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 13px;
+    }
+
+    input,
+    select,
+    button {
+      background: var(--panel);
+      color: var(--text);
+      border: 1px solid var(--border);
+      padding: 10px 12px;
+      font-size: 14px;
+      outline: none;
+      font-family: "IBM Plex Mono", monospace;
+    }
+
+    input,
+    select {
+      min-height: 42px;
+    }
+
+    input {
+      flex: 1 1 280px;
+      caret-color: var(--accent);
+      color: var(--text);
+    }
+
+    select {
+      min-width: 180px;
+    }
+
+    input:focus,
+    select:focus {
+      border-color: var(--accent);
+    }
+
+    button {
+      border-color: var(--accent);
+      background: var(--accent);
+      color: #f7f6f1;
+      cursor: pointer;
+      min-height: 42px;
+      font-weight: 500;
+    }
+
+    button:disabled {
+      border-color: var(--border);
+      color: var(--muted);
+      background: var(--panel-alt);
+      cursor: default;
+    }
+
+    .status-line {
+      margin-top: 12px;
+      color: var(--muted);
+      min-height: 18px;
+      font-size: 13px;
+      font-family: "IBM Plex Mono", monospace;
+    }
+
+    .table-wrap,
+    .chart-box,
+    .signals-log,
+    .brief-box {
+      border: 1px solid var(--border);
+      background: var(--panel);
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+      font-family: "IBM Plex Mono", monospace;
+    }
+
+    th,
+    td {
+      border: 1px solid var(--border);
+      padding: 10px 12px;
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      color: var(--muted);
+      font-weight: 500;
+      letter-spacing: 1px;
+      background: var(--panel-alt);
+    }
+
+    tbody tr:nth-child(odd) {
+      background: #fcfaf4;
+    }
+
+    tbody tr:nth-child(even) {
+      background: var(--panel);
+    }
+
+    .delta-pos {
+      color: var(--danger);
+    }
+
+    .delta-neg {
+      color: var(--cool);
+    }
+
+    .delta-zero,
+    .alert-none,
+    .frame-none,
+    .empty {
+      color: var(--muted);
+    }
+
+    .alert-strong {
+      color: var(--danger);
+    }
+
+    .alert-mild,
+    .frame-yes {
+      color: var(--warning);
+    }
+
+    .chart-box {
+      padding: 18px;
+    }
+
+    .chart-canvas-wrap {
+      display: flex;
+      justify-content: center;
+      padding: 12px 0 8px 0;
+    }
+
+    #radarChart {
+      width: min(760px, 100%);
+      height: auto;
+      aspect-ratio: 1 / 1;
+      display: block;
+    }
+
+    .chart-legend {
+      text-align: center;
+      color: var(--muted);
+      font-size: 12px;
+      padding-bottom: 4px;
+      font-family: "IBM Plex Mono", monospace;
+    }
+
+    .chart-legend .current {
+      color: var(--accent);
+    }
+
+    .chart-legend .baseline {
+      color: #777;
+    }
+
+    .signals-log {
+      max-height: 220px;
+      overflow-y: auto;
+      padding: 14px 16px;
+      font-size: 12px;
+      line-height: 1.5;
+      white-space: pre-wrap;
+      font-family: "IBM Plex Mono", monospace;
+    }
+
+    .brief-box {
+      border-left: 3px solid var(--accent);
+      padding: 14px 0 14px 18px;
+    }
+
+    .brief-content {
+      color: #50554f;
+    }
+
+    .brief-empty,
+    pre {
+      margin: 0;
+      color: #50554f;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-size: 12px;
+      line-height: 1.65;
+      font-family: "IBM Plex Mono", monospace;
+    }
+
+    .brief-headline {
+      margin: 0 0 10px 0;
+      color: var(--text);
+      font-size: 20px;
+      line-height: 1.3;
+      font-weight: 600;
+      font-family: "Instrument Sans", sans-serif;
+    }
+
+    .brief-narrative {
+      margin: 0 0 16px 0;
+      color: #3e453f;
+      font-size: 14px;
+      line-height: 1.65;
+      font-family: "Instrument Sans", sans-serif;
+      max-width: 75ch;
+    }
+
+    .brief-meta {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 10px;
+      margin: 0 0 20px 0;
+    }
+
+    .brief-meta-item {
+      border: 1px solid var(--border);
+      background: #faf7f0;
+      padding: 10px 12px;
+    }
+
+    .brief-meta-label {
+      margin-bottom: 6px;
+      color: var(--muted);
+      font-size: 10px;
+      letter-spacing: 1.4px;
+      text-transform: uppercase;
+      font-family: "IBM Plex Mono", monospace;
+    }
+
+    .brief-meta-value {
+      color: var(--text);
+      font-size: 13px;
+      line-height: 1.4;
+      font-family: "IBM Plex Mono", monospace;
+    }
+
+    .brief-subtitle {
+      margin: 0 0 10px 0;
+      color: var(--text);
+      font-size: 12px;
+      letter-spacing: 1.6px;
+      text-transform: uppercase;
+      font-family: "IBM Plex Mono", monospace;
+    }
+
+    .brief-hypotheses {
+      display: grid;
+      gap: 12px;
+    }
+
+    .brief-hypothesis {
+      border: 1px solid var(--border);
+      background: #fcfaf4;
+      padding: 14px 16px;
+    }
+
+    .brief-hypothesis-title {
+      margin: 0 0 8px 0;
+      color: var(--text);
+      font-size: 15px;
+      line-height: 1.5;
+      font-family: "Instrument Sans", sans-serif;
+      font-weight: 500;
+    }
+
+    .brief-hypothesis-meta {
+      display: grid;
+      gap: 4px;
+      margin: 0 0 10px 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.5;
+      font-family: "IBM Plex Mono", monospace;
+    }
+
+    .brief-label {
+      color: var(--muted);
+    }
+
+    .brief-question {
+      margin: 0;
+      padding-top: 10px;
+      border-top: 1px solid var(--border);
+      color: #2e352f;
+      font-size: 13px;
+      line-height: 1.6;
+      font-family: "Instrument Sans", sans-serif;
+    }
+
+    .brief-question strong {
+      color: var(--text);
+      font-weight: 600;
+    }
+
+    @media (max-width: 720px) {
+      body {
+        padding: 16px;
+      }
+
+      .header {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+
+      .health {
+        text-align: left;
+      }
+
+      table {
+        font-size: 11px;
+      }
+
+      .brand {
+        font-size: 18px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header class="header">
+      <div class="brand">SIGDRIFTR</div>
+      <div id="health" class="health">loading health...</div>
+    </header>
+
+    <section>
+      <h2 class="section-title">Topic Input</h2>
+      <div class="topic-row">
+        <label class="topic-label" for="topicInput">TOPIC</label>
+        <input id="topicInput" type="text" value="energie" spellcheck="false" autocomplete="off">
+        <button id="analyzeButton" type="button">Analyze</button>
+      </div>
+      <div id="statusLine" class="status-line"></div>
+    </section>
+
+    <section>
+      <h2 class="section-title">Segment Drift - last 7 days</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>SEGMENT</th>
+              <th>CONCERN D</th>
+              <th>PURCHASE_INTENT D</th>
+              <th>AVOIDANCE D</th>
+              <th>DRIFT MAG</th>
+              <th>FRAME SHIFT</th>
+              <th>ALERT</th>
+            </tr>
+          </thead>
+          <tbody id="driftTableBody">
+            <tr>
+              <td class="empty" colspan="7">Run analysis to populate drift data.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section>
+      <h2 id="chartTitle" class="section-title">Signal Profile</h2>
+      <div class="chart-box">
+        <div class="chart-controls">
+          <label class="select-label" for="segmentSelect">SEGMENT</label>
+          <select id="segmentSelect"></select>
+        </div>
+        <div class="chart-canvas-wrap">
+          <canvas id="radarChart" width="520" height="520"></canvas>
+        </div>
+        <div class="chart-legend"><span class="current">- CURRENT</span>   <span class="baseline">- - BASELINE</span></div>
+      </div>
+    </section>
+
+    <section>
+      <h2 id="signalsTitle" class="section-title">Recent Signals</h2>
+      <div id="signalsLog" class="signals-log">No signals loaded.</div>
+    </section>
+
+    <section>
+      <h2 id="briefTitle" class="section-title">Research Brief</h2>
+      <div class="brief-box">
+        <div id="briefOutput" class="brief-content">
+          <div class="brief-empty">&gt; no brief available for this topic</div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <script>
+    const topicInput = document.getElementById("topicInput");
+    const analyzeButton = document.getElementById("analyzeButton");
+    const statusLine = document.getElementById("statusLine");
+    const healthEl = document.getElementById("health");
+    const driftTableBody = document.getElementById("driftTableBody");
+    const segmentSelect = document.getElementById("segmentSelect");
+    const chartTitle = document.getElementById("chartTitle");
+    const signalsTitle = document.getElementById("signalsTitle");
+    const signalsLog = document.getElementById("signalsLog");
+    const briefTitle = document.getElementById("briefTitle");
+    const briefOutput = document.getElementById("briefOutput");
+
+    const DEFAULT_SEGMENTS = ["young_urban", "family", "senior", "b2b"];
+    const SIGNAL_LABELS = ["CONCERN", "PURCHASE_INTENT", "AVOIDANCE"];
+    let driftData = null;
+    let signalsData = [];
+    let briefData = null;
+    let radarChart = null;
+
+    function escapeHtml(value) {
+      return String(value)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/\"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+    }
+
+    function formatSigned(value) {
+      const number = Number(value || 0);
+      return (number >= 0 ? "+" : "") + number.toFixed(3);
+    }
+
+    function deltaClass(value) {
+      const number = Number(value || 0);
+      if (number > 0) {
+        return "delta-pos";
+      }
+      if (number < 0) {
+        return "delta-neg";
+      }
+      return "delta-zero";
+    }
+
+    function updateStatus(message) {
+      statusLine.textContent = message;
+    }
+
+    function colorClassForHealth(value) {
+      if (value === "ok") {
+        return "ok";
+      }
+      if (typeof value === "string" && value.startsWith("error")) {
+        return "error";
+      }
+      if (Array.isArray(value) && value.length === 0) {
+        return "warn";
+      }
+      return "ok";
+    }
+
+    async function fetchJson(url, options) {
+      const response = await fetch(url, options);
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(text || response.statusText);
+      }
+      return response.json();
+    }
+
+    async function loadHealth() {
+      try {
+        const health = await fetchJson("/health");
+        const keys = ["db", "articles", "signals", "ollama"];
+        const content = keys
+          .filter((key) => key in health)
+          .map((key) => {
+            const value = health[key];
+            const cssClass = colorClassForHealth(value);
+            return `${escapeHtml(key)}: <span class="${cssClass}">${escapeHtml(value)}</span>`;
+          })
+          .join("  /  ");
+        healthEl.innerHTML = content;
+      } catch (error) {
+        healthEl.innerHTML = `<span class="error">health: ${escapeHtml(error.message)}</span>`;
+      }
+    }
+
+    function renderDriftTable() {
+      if (!driftData || !Array.isArray(driftData.segments) || driftData.segments.length === 0) {
+        driftTableBody.innerHTML = '<tr><td class="empty" colspan="7">No drift data loaded.</td></tr>';
+        return;
+      }
+
+      driftTableBody.innerHTML = driftData.segments.map((row) => {
+        if (!row.has_data) {
+          return `
+            <tr class="empty">
+              <td>${escapeHtml(row.segment)}</td>
+              <td>-- NO DATA --</td>
+              <td>-- NO DATA --</td>
+              <td>-- NO DATA --</td>
+              <td>-- NO DATA --</td>
+              <td>-- NO DATA --</td>
+              <td>-- NO DATA --</td>
+            </tr>
+          `;
+        }
+
+        const deltas = row.deltas || {};
+        const frameShiftText = row.frame_shift ? "YES" : "-";
+        const frameShiftClass = row.frame_shift ? "frame-yes" : "frame-none";
+        const alertClass = row.alert_level === "strong"
+          ? "alert-strong"
+          : row.alert_level === "mild"
+            ? "alert-mild"
+            : "alert-none";
+
+        return `
+          <tr>
+            <td>${escapeHtml(row.segment)}</td>
+            <td class="${deltaClass(deltas.concern_level)}">${escapeHtml(formatSigned(deltas.concern_level))}</td>
+            <td class="${deltaClass(deltas.purchase_intent)}">${escapeHtml(formatSigned(deltas.purchase_intent))}</td>
+            <td class="${deltaClass(deltas.avoidance_signals)}">${escapeHtml(formatSigned(deltas.avoidance_signals))}</td>
+            <td class="value">${escapeHtml(Number(row.drift_magnitude || 0).toFixed(3))}</td>
+            <td class="${frameShiftClass}">${frameShiftText}</td>
+            <td class="${alertClass}">${escapeHtml(String(row.alert_level || "none").toUpperCase())}</td>
+          </tr>
+        `;
+      }).join("");
+    }
+
+    function populateSegmentSelect() {
+      const segments = driftData && Array.isArray(driftData.segments) && driftData.segments.length
+        ? driftData.segments.map((row) => row.segment)
+        : DEFAULT_SEGMENTS;
+      const previous = segmentSelect.value;
+      segmentSelect.innerHTML = segments
+        .map((segment) => `<option value="${escapeHtml(segment)}">${escapeHtml(segment)}</option>`)
+        .join("");
+
+      if (segments.includes(previous)) {
+        segmentSelect.value = previous;
+      } else {
+        segmentSelect.value = segments[0];
+      }
+    }
+
+    function getSegmentEntry(segment) {
+      if (!driftData || !Array.isArray(driftData.segments)) {
+        return null;
+      }
+      return driftData.segments.find((row) => row.segment === segment) || null;
+    }
+
+    function ensureChart() {
+      if (radarChart) {
+        return radarChart;
+      }
+
+      const canvas = document.getElementById("radarChart");
+      const maxDisplaySize = 760;
+      const horizontalPadding = 48;
+      const availableWidth = Math.max(
+        320,
+        Math.min(maxDisplaySize, canvas.parentElement.clientWidth - horizontalPadding)
+      );
+      const displaySize = Math.round(availableWidth);
+      const pixelRatio = window.devicePixelRatio || 1;
+      canvas.width = Math.round(displaySize * pixelRatio);
+      canvas.height = Math.round(displaySize * pixelRatio);
+      canvas.style.width = `${displaySize}px`;
+      canvas.style.height = `${displaySize}px`;
+
+      const context = canvas.getContext("2d");
+      context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+      radarChart = new Chart(context, {
+        type: "radar",
+        data: {
+          labels: SIGNAL_LABELS,
+          datasets: [
+            {
+              label: "CURRENT",
+              data: [0, 0, 0],
+              borderColor: "#1f7a4d",
+              backgroundColor: "transparent",
+              pointRadius: 0,
+              pointHoverRadius: 0,
+              borderWidth: 2
+            },
+            {
+              label: "BASELINE",
+              data: [0, 0, 0],
+              borderColor: "#444",
+              backgroundColor: "transparent",
+              pointRadius: 0,
+              pointHoverRadius: 0,
+              borderWidth: 1.5,
+              borderDash: [6, 4]
+            }
+          ]
+        },
+        options: {
+          responsive: false,
+          animation: false,
+          devicePixelRatio: 1,
+          plugins: {
+            legend: {
+              display: false
+            },
+            tooltip: {
+              enabled: true,
+              titleFont: {
+                family: "IBM Plex Mono"
+              },
+              bodyFont: {
+                family: "IBM Plex Mono"
+              }
+            }
+          },
+          elements: {
+            line: {
+              tension: 0
+            }
+          },
+          scales: {
+            r: {
+              min: 0,
+              max: 1,
+              angleLines: {
+                color: "#d9d4c7"
+              },
+              grid: {
+                color: "#d9d4c7"
+              },
+              pointLabels: {
+                color: "#3d433e",
+                font: {
+                  family: "IBM Plex Mono",
+                  size: 12
+                }
+              },
+              ticks: {
+                color: "#7a8079",
+                backdropColor: "transparent",
+                font: {
+                  family: "IBM Plex Mono",
+                  size: 10
+                },
+                stepSize: 0.25
+              }
+            }
+          }
+        }
+      });
+
+      return radarChart;
+    }
+
+    function renderChart() {
+      const segment = segmentSelect.value || DEFAULT_SEGMENTS[0];
+      const entry = getSegmentEntry(segment);
+      const current = entry && entry.current ? entry.current : {};
+      const baseline = entry && entry.baseline ? entry.baseline : {};
+      const chart = ensureChart();
+
+      chart.data.datasets[0].data = [
+        Number(current.concern_level || 0),
+        Number(current.purchase_intent || 0),
+        Number(current.avoidance_signals || 0)
+      ];
+      chart.data.datasets[1].data = [
+        Number(baseline.concern_level || 0),
+        Number(baseline.purchase_intent || 0),
+        Number(baseline.avoidance_signals || 0)
+      ];
+      chart.update();
+
+      chartTitle.textContent = `SIGNAL PROFILE - ${segment} / current vs baseline`;
+    }
+
+    window.addEventListener("resize", () => {
+      if (!radarChart) {
+        return;
+      }
+
+      radarChart.destroy();
+      radarChart = null;
+      renderChart();
+    });
+
+    function findDominantSegment(row) {
+      const segmentEntries = Object.entries(row)
+        .filter(([key]) => key.startsWith("seg_"))
+        .sort(([, a], [, b]) => Number(b) - Number(a));
+
+      if (!segmentEntries.length) {
+        return ["seg_none", 0];
+      }
+
+      return segmentEntries[0];
+    }
+
+    function renderSignals() {
+      const topic = topicInput.value.trim();
+      signalsTitle.textContent = `RECENT SIGNALS - ${topic || "topic"}`;
+
+      if (!Array.isArray(signalsData) || signalsData.length === 0) {
+        signalsLog.textContent = "No signals loaded.";
+        return;
+      }
+
+      signalsLog.textContent = signalsData.slice(0, 30).map((row) => {
+        const [segmentKey, score] = findDominantSegment(row);
+        const frame = String(row.dominant_frame || "neutral").padEnd(9, " ");
+        const segment = segmentKey.replace(/^seg_/, "");
+        return `${row.extracted_at}  [${frame}]  concern=${Number(row.concern_level || 0).toFixed(2)}  intent=${Number(row.purchase_intent || 0).toFixed(2)}  avoid=${Number(row.avoidance_signals || 0).toFixed(2)}  ${segment}=${Number(score || 0).toFixed(2)}`;
+      }).join("\n");
+    }
+
+    function renderBriefMeta(label, value) {
+      return `
+        <div class="brief-meta-item">
+          <div class="brief-meta-label">${escapeHtml(label)}</div>
+          <div class="brief-meta-value">${escapeHtml(value)}</div>
+        </div>
+      `;
+    }
+
+    function formatBrief() {
+      if (!briefData || typeof briefData !== "object") {
+        return '<div class="brief-empty">&gt; no brief available for this topic</div>';
+      }
+
+      const headline = briefData.headline
+        ? `<h3 class="brief-headline">${escapeHtml(briefData.headline)}</h3>`
+        : "";
+      const narrative = briefData.narrative
+        ? `<p class="brief-narrative">${escapeHtml(briefData.narrative)}</p>`
+        : "";
+
+      const metaParts = [];
+      if (briefData.most_affected_segment) {
+        metaParts.push(renderBriefMeta("Most affected", briefData.most_affected_segment));
+      }
+      if (briefData.drift_type) {
+        metaParts.push(renderBriefMeta("Drift type", briefData.drift_type));
+      }
+      if (briefData.alert_level) {
+        metaParts.push(renderBriefMeta("Alert level", briefData.alert_level));
+      }
+      if (briefData.generated_at) {
+        metaParts.push(renderBriefMeta("Generated", briefData.generated_at));
+      }
+
+      const meta = metaParts.length
+        ? `<div class="brief-meta">${metaParts.join("")}</div>`
+        : "";
+
+      if (Array.isArray(briefData.hypotheses) && briefData.hypotheses.length > 0) {
+        const hypotheses = briefData.hypotheses.map((item, index) => `
+          <article class="brief-hypothesis">
+            <div class="brief-hypothesis-title"><strong>[${index + 1}]</strong> ${escapeHtml(item.hypothesis || "")}</div>
+            <div class="brief-hypothesis-meta">
+              <div><span class="brief-label">Segment:</span> ${escapeHtml(item.segment || "-")}</div>
+              <div><span class="brief-label">Signal basis:</span> ${escapeHtml(item.signal_basis || "-")}</div>
+            </div>
+            <p class="brief-question"><strong>Survey question:</strong> <em>${escapeHtml(item.suggested_question || "-")}</em></p>
+          </article>
+        `).join("");
+
+        return `
+          ${headline}
+          ${narrative}
+          ${meta}
+          <div class="brief-subtitle">Hypotheses</div>
+          <div class="brief-hypotheses">${hypotheses}</div>
+        `;
+      }
+
+      if (headline || narrative || meta) {
+        return `${headline}${narrative}${meta}`;
+      }
+
+      return `<pre>${escapeHtml(JSON.stringify(briefData, null, 2))}</pre>`;
+    }
+
+    function renderBrief() {
+      const topic = topicInput.value.trim();
+      briefTitle.textContent = `RESEARCH BRIEF - ${topic || "topic"}`;
+      briefOutput.innerHTML = formatBrief();
+    }
+
+    function renderAll() {
+      renderDriftTable();
+      populateSegmentSelect();
+      renderChart();
+      renderSignals();
+      renderBrief();
+    }
+
+    async function runAnalysis() {
+      const topic = topicInput.value.trim();
+      if (!topic) {
+        updateStatus("> enter a topic");
+        topicInput.focus();
+        return;
+      }
+
+      analyzeButton.disabled = true;
+
+      try {
+        updateStatus("> collecting...");
+        await fetchJson(`/collect?topic=${encodeURIComponent(topic)}`, { method: "POST" });
+
+        updateStatus("> extracting...");
+        const extractResult = await fetchJson(`/extract?topic=${encodeURIComponent(topic)}`, { method: "POST" });
+
+        updateStatus("> computing drift...");
+        const [driftResult, signalsResult, briefResult] = await Promise.all([
+          fetchJson(`/drift/${encodeURIComponent(topic)}`),
+          fetchJson(`/signals?topic=${encodeURIComponent(topic)}`),
+          fetchJson(`/brief/${encodeURIComponent(topic)}`)
+        ]);
+
+        driftData = driftResult;
+        signalsData = signalsResult;
+        briefData = briefResult;
+        renderAll();
+        updateStatus(`> done. ${extractResult.processed || signalsData.length || 0} signals processed.`);
+      } catch (error) {
+        driftData = null;
+        signalsData = [];
+        briefData = null;
+        renderAll();
+        updateStatus(`> error: ${error.message}`);
+      } finally {
+        analyzeButton.disabled = false;
+      }
+    }
+
+    segmentSelect.addEventListener("change", () => {
+      renderChart();
+    });
+
+    analyzeButton.addEventListener("click", runAnalysis);
+
+    loadHealth();
+    populateSegmentSelect();
+    renderChart();
+  </script>
+</body>
+</html>

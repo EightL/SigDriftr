@@ -10,6 +10,11 @@ FEEDS = [
         "affinity_tag": "b2b",
     },
     {
+        "outlet": "wave",
+        "rss_url": "https://wave.rozhlas.cz/rss.xml",
+        "affinity_tag": "young_urban",
+    },
+    {
         "outlet": "idnes",
         "rss_url": "https://servis.idnes.cz/rss.aspx",
         "affinity_tag": "mainstream",
@@ -28,6 +33,11 @@ FEEDS = [
         "outlet": "blesk",
         "rss_url": "https://www.blesk.cz/rss",
         "affinity_tag": "senior",
+    },
+    {
+        "outlet": "maminka",
+        "rss_url": "https://www.maminka.cz/rss",
+        "affinity_tag": "family",
     },
     {
         "outlet": "ct24",

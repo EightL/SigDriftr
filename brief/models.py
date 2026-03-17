@@ -2,9 +2,11 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+SegmentKey = Literal["young_urban", "family", "senior", "b2b"]
+
 
 class SurveyHypothesis(BaseModel):
-    segment: str = Field(description="Target audience segment")
+    segment: SegmentKey = Field(description="Target audience segment")
     hypothesis: str = Field(
         description="Falsifiable behavioral hypothesis (1-2 sentences)"
     )
@@ -24,7 +26,7 @@ class ResearchBrief(BaseModel):
     narrative: str = Field(
         description="2-3 sentence plain-language brief for a Lakmoos analyst"
     )
-    most_affected_segment: str
+    most_affected_segment: SegmentKey
     drift_type: Literal[
         "concern_spike",
         "purchase_surge",
@@ -37,4 +39,3 @@ class ResearchBrief(BaseModel):
     alert_level: Literal["none", "mild", "strong"]
     generated_at: str
     model_used: str
-

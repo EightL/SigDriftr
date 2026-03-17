@@ -18,6 +18,18 @@ AFFINITY_PRIORS = {
         "seg_senior": 0.25,
         "seg_b2b": 0.15,
     },
+    "young_urban": {
+        "seg_young_urban": 0.60,
+        "seg_family": 0.15,
+        "seg_senior": 0.10,
+        "seg_b2b": 0.15,
+    },
+    "family": {
+        "seg_young_urban": 0.10,
+        "seg_family": 0.60,
+        "seg_senior": 0.20,
+        "seg_b2b": 0.10,
+    },
     "b2b": {
         "seg_young_urban": 0.15,
         "seg_family": 0.10,
@@ -37,9 +49,7 @@ You are a behavioral analyst specializing in Czech media. Analyze the article be
 Article title: {title}
 Article summary: {summary}
 
-Step 1 - Reason briefly (2-3 sentences): What emotions, consumer behaviors, or audience concerns does this article likely trigger?
-
-Step 2 - Output ONLY this JSON block (nothing after it):
+Output ONLY this JSON object (nothing before or after it):
 {{
   "concern_level": 0.0,
   "purchase_intent": 0.0,
@@ -126,13 +136,11 @@ def _ollama_request(payload: bytes) -> dict | None:
         method="POST",
     )
     with urllib.request.urlopen(request, timeout=OLLAMA_TIMEOUT_SECONDS) as response:
-        raw = json.loads(response.read().decode("utf-8")).get("response", "")
+        raw = json.loads(response.read().decode("utf-8")).get("response", "").strip()
 
-    start = raw.rfind("{")
-    end = raw.rfind("}") + 1
-    if start == -1 or end == 0:
+    if not raw:
         return None
-    return json.loads(raw[start:end])
+    return json.loads(raw)
 
 
 def _try_ollama(title: str, summary: str, model: str) -> dict | None:

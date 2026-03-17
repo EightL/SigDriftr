@@ -7,7 +7,7 @@ import feedparser
 from config.feeds import FEEDS
 from db.init import get_conn
 
-SEMANTIC_THRESHOLD = 0.25
+SEMANTIC_THRESHOLD = 0.55
 
 
 @lru_cache(maxsize=1)

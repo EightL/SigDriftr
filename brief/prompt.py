@@ -63,29 +63,32 @@ Return ONLY valid JSON matching this exact schema. No markdown, no prose outside
 Reason from the evidence in the drift summary and representative article snippets.
 Choose the most affected segment based on drift magnitude, alert level, and article grounding.
 Write exactly 3 hypotheses covering the most relevant segments.
+Use ONLY canonical segment keys in `most_affected_segment` and every hypothesis `segment` field:
+`young_urban`, `family`, `senior`, `b2b`.
+Never use human-readable labels such as "young urban adults", "seniors", or "business decision-makers".
 
 {{
   "topic": "{topic}",
   "headline": "<8-12 word summary of dominant behavioral shift>",
   "narrative": "<2-3 sentence plain-language brief for a Lakmoos analyst>",
-  "most_affected_segment": "<one of: young_urban | family | senior | b2b>",
-  "drift_type": "<one of: concern_spike | purchase_surge | avoidance_rise | frame_shift | mixed | stable>",
+  "most_affected_segment": "<MUST be exactly one of these strings: young_urban, family, senior, b2b>",
+  "drift_type": "<MUST be exactly one of these strings: concern_spike, purchase_surge, avoidance_rise, frame_shift, mixed, stable>",
   "alert_level": "<one of: none | mild | strong>",
   "hypotheses": [
     {{
-      "segment": "<segment>",
+      "segment": "<MUST be exactly one of: young_urban, family, senior, b2b>",
       "hypothesis": "<falsifiable behavioral hypothesis>",
       "signal_basis": "<e.g. concern_level +0.18>",
       "suggested_question": "<one Likert-scale survey question>"
     }},
     {{
-      "segment": "<segment>",
+      "segment": "<MUST be exactly one of: young_urban, family, senior, b2b>",
       "hypothesis": "<falsifiable behavioral hypothesis>",
       "signal_basis": "<e.g. purchase_intent -0.12>",
       "suggested_question": "<one Likert-scale survey question>"
     }},
     {{
-      "segment": "<segment>",
+      "segment": "<MUST be exactly one of: young_urban, family, senior, b2b>",
       "hypothesis": "<falsifiable behavioral hypothesis>",
       "signal_basis": "<e.g. avoidance_signals +0.09>",
       "suggested_question": "<one Likert-scale survey question>"

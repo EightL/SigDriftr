@@ -7,7 +7,8 @@ from unittest.mock import patch
 import db.init
 import pytest
 
-pytest.importorskip("pydantic")
+pydantic = pytest.importorskip("pydantic")
+ValidationError = pydantic.ValidationError
 
 from brief.generator import (
     BRIEF_CACHE_TTL,
@@ -205,6 +206,257 @@ def test_generate_brief_returns_valid_structured_brief() -> None:
         assert len(brief.hypotheses) == 3
         assert brief.hypotheses[0].segment == "senior"
         mock_call.assert_called_once()
+    finally:
+        cleanup_temp_db(temp_dir)
+
+
+def test_generate_brief_normalizes_segment_aliases() -> None:
+    temp_dir = setup_temp_db()
+    try:
+        seed_baselines(["inflace"])
+        insert_article_with_signal(
+            article_id="alias-1",
+            topic="inflace",
+            title="Alias test article",
+            summary="Used to verify segment normalization.",
+            concern=0.8,
+            purchase=0.2,
+            avoidance=0.3,
+            frame="fear",
+            seg_young_urban=0.2,
+            seg_family=0.2,
+            seg_senior=0.2,
+            seg_b2b=0.4,
+        )
+
+        response_data = {
+            "topic": "inflace",
+            "headline": "B2B segment reacts most strongly to inflation",
+            "narrative": "Business decision-makers show the strongest shift in purchase intent and avoidance behavior.",
+            "most_affected_segment": "business_decision-makers",
+            "drift_type": "frame_shift",
+            "alert_level": "strong",
+            "hypotheses": [
+                {
+                    "segment": "business decision-makers",
+                    "hypothesis": "B2B buyers will defer major commitments.",
+                    "signal_basis": "purchase_intent -0.36",
+                    "suggested_question": "How likely are you to delay a major business purchase?",
+                },
+                {
+                    "segment": "young urban adults",
+                    "hypothesis": "Young urban adults will reduce optional spending.",
+                    "signal_basis": "avoidance_signals +0.15",
+                    "suggested_question": "How likely are you to avoid discretionary purchases?",
+                },
+                {
+                    "segment": "seniors",
+                    "hypothesis": "Seniors will remain cautious but stable.",
+                    "signal_basis": "avoidance_signals -0.09",
+                    "suggested_question": "How much have your spending habits changed?",
+                },
+            ],
+            "generated_at": "ignored",
+            "model_used": "ignored",
+        }
+
+        with patch("brief.generator._call_ollama_json", return_value=response_data):
+            brief = generate_brief("inflace")
+
+        assert brief.most_affected_segment == "b2b"
+        assert [item.segment for item in brief.hypotheses] == [
+            "b2b",
+            "young_urban",
+            "senior",
+        ]
+    finally:
+        cleanup_temp_db(temp_dir)
+
+
+def test_generate_brief_normalizes_composite_drift_type() -> None:
+    temp_dir = setup_temp_db()
+    try:
+        seed_baselines(["inflace"])
+        insert_article_with_signal(
+            article_id="drift-type-1",
+            topic="inflace",
+            title="Drift type alias article",
+            summary="Used to verify drift type normalization.",
+            concern=0.7,
+            purchase=0.1,
+            avoidance=0.4,
+            frame="conflict",
+            seg_young_urban=0.4,
+            seg_family=0.2,
+            seg_senior=0.2,
+            seg_b2b=0.2,
+        )
+
+        response_data = {
+            "topic": "inflace",
+            "headline": "B2B demand weakens under conflicting inflation signals",
+            "narrative": "The model returned a composite drift label that should be normalized.",
+            "most_affected_segment": "b2b",
+            "drift_type": "purchase_surge | frame_shift",
+            "alert_level": "strong",
+            "hypotheses": [
+                {
+                    "segment": "b2b",
+                    "hypothesis": "B2B buyers will delay purchases.",
+                    "signal_basis": "purchase_intent -0.36",
+                    "suggested_question": "How likely are you to postpone a major business purchase?",
+                },
+                {
+                    "segment": "family",
+                    "hypothesis": "Families will stay cautious.",
+                    "signal_basis": "avoidance_signals +0.03",
+                    "suggested_question": "How likely are you to cut household spending?",
+                },
+                {
+                    "segment": "young_urban",
+                    "hypothesis": "Young urban consumers will reduce optional spending.",
+                    "signal_basis": "avoidance_signals +0.15",
+                    "suggested_question": "How likely are you to avoid discretionary purchases?",
+                },
+            ],
+            "generated_at": "ignored",
+            "model_used": "ignored",
+        }
+
+        with patch("brief.generator._call_ollama_json", return_value=response_data):
+            brief = generate_brief("inflace")
+
+        assert brief.drift_type == "purchase_surge"
+    finally:
+        cleanup_temp_db(temp_dir)
+
+
+def test_research_brief_rejects_noncanonical_segment_keys() -> None:
+    with pytest.raises(ValidationError):
+        ResearchBrief(
+            topic="inflace",
+            headline="Invalid segment example",
+            narrative="This should fail validation.",
+            most_affected_segment="business_decision-makers",
+            drift_type="mixed",
+            alert_level="mild",
+            hypotheses=[
+                {
+                    "segment": "young_urban",
+                    "hypothesis": "Hypothesis one.",
+                    "signal_basis": "concern_level +0.10",
+                    "suggested_question": "Question one?",
+                },
+                {
+                    "segment": "family",
+                    "hypothesis": "Hypothesis two.",
+                    "signal_basis": "concern_level +0.05",
+                    "suggested_question": "Question two?",
+                },
+                {
+                    "segment": "senior citizens",
+                    "hypothesis": "Hypothesis three.",
+                    "signal_basis": "concern_level +0.02",
+                    "suggested_question": "Question three?",
+                },
+            ],
+            generated_at="2026-03-17T00:00:00+00:00",
+            model_used=OLLAMA_MODEL,
+        )
+
+
+def test_generate_brief_returns_fallback_when_validation_still_fails() -> None:
+    temp_dir = setup_temp_db()
+    try:
+        seed_baselines(["inflace"])
+        insert_article_with_signal(
+            article_id="fallback-1",
+            topic="inflace",
+            title="Fallback article",
+            summary="Used to verify degraded fallback behavior.",
+            concern=0.9,
+            purchase=0.1,
+            avoidance=0.6,
+            frame="fear",
+            seg_young_urban=0.1,
+            seg_family=0.2,
+            seg_senior=0.6,
+            seg_b2b=0.1,
+        )
+
+        response_data = {
+            "topic": "inflace",
+            "headline": "Invalid alert level example",
+            "narrative": "This payload should fail strict validation and trigger fallback.",
+            "most_affected_segment": "business_decision-makers",
+            "drift_type": "unmapped_drift_type",
+            "alert_level": "very_strong",
+            "hypotheses": [
+                {
+                    "segment": "business decision-makers",
+                    "hypothesis": "Invalid hypothesis one.",
+                    "signal_basis": "bad",
+                    "suggested_question": "Q1?",
+                },
+                {
+                    "segment": "young urban adults",
+                    "hypothesis": "Invalid hypothesis two.",
+                    "signal_basis": "bad",
+                    "suggested_question": "Q2?",
+                },
+                {
+                    "segment": "seniors",
+                    "hypothesis": "Invalid hypothesis three.",
+                    "signal_basis": "bad",
+                    "suggested_question": "Q3?",
+                },
+            ],
+            "generated_at": "ignored",
+            "model_used": "ignored",
+        }
+
+        with patch("brief.generator._call_ollama_json", return_value=response_data):
+            brief = generate_brief("inflace")
+
+        assert "degraded" not in brief.headline.lower()
+        assert brief.headline.startswith(("Young Urban", "Family", "Senior", "B2B"))
+        assert brief.alert_level in ("none", "mild", "strong")
+        assert brief.most_affected_segment in ("young_urban", "family", "senior", "b2b")
+        assert len(brief.hypotheses) == 3
+    finally:
+        cleanup_temp_db(temp_dir)
+
+
+def test_generate_brief_returns_fallback_when_ollama_json_is_invalid() -> None:
+    temp_dir = setup_temp_db()
+    try:
+        seed_baselines(["inflace"])
+        insert_article_with_signal(
+            article_id="invalid-json-1",
+            topic="inflace",
+            title="Invalid JSON article",
+            summary="Used to verify malformed Ollama JSON fallback behavior.",
+            concern=0.8,
+            purchase=0.2,
+            avoidance=0.5,
+            frame="fear",
+            seg_young_urban=0.2,
+            seg_family=0.2,
+            seg_senior=0.5,
+            seg_b2b=0.1,
+        )
+
+        with patch(
+            "brief.generator._call_ollama_json",
+            side_effect=RuntimeError("Ollama returned invalid JSON in JSON mode."),
+        ):
+            brief = generate_brief("inflace")
+
+        assert "degraded" not in brief.headline.lower()
+        assert brief.headline.startswith(("Young Urban", "Family", "Senior", "B2B"))
+        assert brief.topic == "inflace"
+        assert brief.alert_level in ("none", "mild", "strong")
+        assert len(brief.hypotheses) == 3
     finally:
         cleanup_temp_db(temp_dir)
 

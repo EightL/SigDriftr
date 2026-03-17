@@ -37,6 +37,16 @@ def call_collect(base_url: str, topic: str) -> dict:
         return json.loads(body)
 
 
+def call_extract(base_url: str, topic: str, timeout_seconds: float) -> dict:
+    query = urllib.parse.urlencode({"topic": topic})
+    url = f"{base_url}/extract?{query}"
+    request = urllib.request.Request(url, method="POST")
+
+    with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+        body = response.read().decode("utf-8")
+        return json.loads(body)
+
+
 def call_signals(base_url: str, topic: str, timeout_seconds: float) -> list[dict]:
     query = urllib.parse.urlencode({"topic": topic})
     url = f"{base_url}/signals?{query}"
@@ -97,7 +107,7 @@ def main() -> int:
     parser.add_argument(
         "--topic",
         default="polit",
-        help="Topic passed to GET /signals and optional POST /collect",
+        help="Topic passed to POST /collect, POST /extract, and GET /signals",
     )
     parser.add_argument(
         "--base-url",
@@ -119,12 +129,17 @@ def main() -> int:
         "--signals-timeout",
         type=float,
         default=180.0,
-        help="How long to wait for GET /signals to finish",
+        help="How long to wait for POST /extract and GET /signals to finish",
     )
     parser.add_argument(
         "--skip-collect",
         action="store_true",
-        help="Skip POST /collect and only test GET /signals",
+        help="Skip POST /collect before running extraction and signal reads",
+    )
+    parser.add_argument(
+        "--skip-extract",
+        action="store_true",
+        help="Skip POST /extract and only inspect already stored signals",
     )
     args = parser.parse_args()
 
@@ -135,6 +150,14 @@ def main() -> int:
             collect_result = call_collect(args.base_url, args.topic)
             print("collect response:")
             print(json.dumps(collect_result, ensure_ascii=False, indent=2))
+            print()
+
+        if not args.skip_extract:
+            extract_result = call_extract(
+                args.base_url, args.topic, args.signals_timeout
+            )
+            print("extract response:")
+            print(json.dumps(extract_result, ensure_ascii=False, indent=2))
             print()
 
         start = time.time()

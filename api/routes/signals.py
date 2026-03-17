@@ -9,9 +9,14 @@ from extraction.extractor import run_extraction
 router = APIRouter()
 
 
+@router.post("/extract")
+def extract(topic: str = "") -> dict[str, int | str]:
+    processed = run_extraction(topic)
+    return {"processed": processed, "topic": topic}
+
+
 @router.get("/signals")
 def get_signals(topic: str = "") -> list[dict]:
-    run_extraction(topic)
     conn = get_conn()
     rows = conn.execute(
         """

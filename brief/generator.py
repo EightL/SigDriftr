@@ -1,4 +1,6 @@
 import json
+import logging
+import re
 import threading
 import urllib.request
 from datetime import datetime, timedelta, timezone
@@ -7,15 +9,56 @@ from brief.models import ResearchBrief
 from brief.prompt import BRIEF_TEMPLATE, build_context_block
 from db.init import get_conn
 from delta.engine import compute_drift
+from pydantic import ValidationError
 
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
 OLLAMA_MODEL = "qwen2.5:7b-instruct"
 OLLAMA_TIMEOUT_SECONDS = 60
 BRIEF_CACHE_TTL = timedelta(minutes=30)
+logger = logging.getLogger(__name__)
 
+# This cache is intentionally process-local for the single-worker demo setup.
 _brief_cache: dict[str, tuple[ResearchBrief, datetime]] = {}
 _cache_lock = threading.Lock()
+_SEGMENT_ALIASES = {
+    "young_urban": "young_urban",
+    "young_urban_adults": "young_urban",
+    "young_urban_adult": "young_urban",
+    "young_adults": "young_urban",
+    "family": "family",
+    "families": "family",
+    "family_household": "family",
+    "family_households": "family",
+    "senior": "senior",
+    "seniors": "senior",
+    "senior_citizen": "senior",
+    "senior_citizens": "senior",
+    "b2b": "b2b",
+    "business": "b2b",
+    "business_decisionmaker": "b2b",
+    "business_decisionmakers": "b2b",
+    "business_decision_maker": "b2b",
+    "business_decision_makers": "b2b",
+}
+_DRIFT_TYPE_ALIASES = {
+    "concern_spike": "concern_spike",
+    "concern": "concern_spike",
+    "purchase_surge": "purchase_surge",
+    "purchase": "purchase_surge",
+    "avoidance_rise": "avoidance_rise",
+    "avoidance": "avoidance_rise",
+    "frame_shift": "frame_shift",
+    "frame": "frame_shift",
+    "mixed": "mixed",
+    "stable": "stable",
+}
+_SEGMENT_DISPLAY_NAMES = {
+    "young_urban": "Young Urban",
+    "family": "Family",
+    "senior": "Senior",
+    "b2b": "B2B",
+}
 
 
 def _call_ollama_json(prompt: str) -> dict:
@@ -44,6 +87,7 @@ def _call_ollama_json(prompt: str) -> dict:
     try:
         return json.loads(raw)
     except json.JSONDecodeError as exc:
+        logger.warning("[brief] Ollama JSON decode failed. raw=%s", raw[:1000])
         raise RuntimeError("Ollama returned invalid JSON in JSON mode.") from exc
 
 
@@ -77,6 +121,143 @@ def _get_top_articles(topic: str, segment: str, limit: int = 2) -> list[dict]:
     ]
 
 
+def _canonicalize_segment(value: str | None) -> str:
+    if not value:
+        return ""
+
+    normalized = re.sub(r"\([^)]*\)", "", value).strip().lower()
+    normalized = normalized.replace("-", "_").replace(" ", "_")
+    normalized = re.sub(r"[^a-z0-9_]+", "", normalized)
+    return _SEGMENT_ALIASES.get(normalized, normalized)
+
+
+def _normalize_brief_payload(data: dict) -> dict:
+    normalized = dict(data)
+    normalized["most_affected_segment"] = _canonicalize_segment(
+        normalized.get("most_affected_segment")
+    )
+    normalized["drift_type"] = _canonicalize_drift_type(normalized.get("drift_type"))
+
+    hypotheses = []
+    for item in normalized.get("hypotheses", []):
+        if not isinstance(item, dict):
+            hypotheses.append(item)
+            continue
+        hypothesis = dict(item)
+        hypothesis["segment"] = _canonicalize_segment(hypothesis.get("segment"))
+        hypotheses.append(hypothesis)
+    normalized["hypotheses"] = hypotheses
+    return normalized
+
+
+def _canonicalize_drift_type(value: str | None) -> str:
+    if not value:
+        return ""
+
+    normalized = value.strip().lower().replace("-", "_").replace(" ", "_")
+    normalized = re.sub(r"[^a-z0-9_|/]+", "", normalized)
+    if normalized in _DRIFT_TYPE_ALIASES:
+        return _DRIFT_TYPE_ALIASES[normalized]
+
+    for part in re.split(r"[|/]+", normalized):
+        part = part.strip("_")
+        if part in _DRIFT_TYPE_ALIASES:
+            return _DRIFT_TYPE_ALIASES[part]
+    return normalized
+
+
+def _fallback_brief(
+    topic: str, generated_at: str, drift: list[dict], error: Exception
+) -> ResearchBrief:
+    ranked_segments = sorted(
+        drift,
+        key=lambda item: (
+            item.get("drift_magnitude", 0.0),
+            item.get("article_count", 0),
+        ),
+        reverse=True,
+    )
+    top_segment = ranked_segments[0]["segment"] if ranked_segments else "young_urban"
+    top_entry = ranked_segments[0] if ranked_segments else {}
+    strongest_alert = top_entry.get("alert_level", "none")
+    if strongest_alert not in ("none", "mild", "strong"):
+        strongest_alert = "none"
+
+    deltas = top_entry.get("deltas", {})
+    signal_key = max(
+        ("concern_level", "purchase_intent", "avoidance_signals"),
+        key=lambda key: abs(deltas.get(key, 0.0)),
+        default="concern_level",
+    )
+    signal_value = deltas.get(signal_key, 0.0)
+    display_name = _SEGMENT_DISPLAY_NAMES.get(top_segment, top_segment.replace("_", " ").title())
+
+    if signal_key == "concern_level" and signal_value > 0:
+        drift_type = "concern_spike"
+        signal_phrase = "Concern Spike"
+    elif signal_key == "purchase_intent" and signal_value > 0:
+        drift_type = "purchase_surge"
+        signal_phrase = "Purchase Intent Surge"
+    elif signal_key == "avoidance_signals" and signal_value > 0:
+        drift_type = "avoidance_rise"
+        signal_phrase = "Avoidance Rise"
+    elif top_entry.get("frame_shift"):
+        drift_type = "frame_shift"
+        signal_phrase = "Frame Shift"
+    else:
+        drift_type = "mixed"
+        signal_phrase = "Behavioral Drift"
+
+    hypothesis_segments = []
+    for entry in ranked_segments:
+        segment = entry.get("segment")
+        if segment in ("young_urban", "family", "senior", "b2b") and segment not in hypothesis_segments:
+            hypothesis_segments.append(segment)
+        if len(hypothesis_segments) == 3:
+            break
+    for segment in ("young_urban", "family", "senior", "b2b"):
+        if segment not in hypothesis_segments:
+            hypothesis_segments.append(segment)
+        if len(hypothesis_segments) == 3:
+            break
+
+    hint = str(error).splitlines()[0][:120]
+    return ResearchBrief(
+        topic=topic,
+        headline=f"{display_name} Segment Shows {signal_phrase}",
+        narrative=(
+            f"Computed drift results show the strongest movement in the {display_name.lower()} segment, "
+            f"with {signal_phrase.lower()} standing out in the current calibration window. "
+            f"This summary was generated from validated drift data after the model output failed validation: {hint}"
+        ),
+        most_affected_segment=top_segment,
+        drift_type=drift_type,
+        alert_level=strongest_alert,
+        hypotheses=[
+            {
+                "segment": hypothesis_segments[0],
+                "hypothesis": "The most shifted segment will show measurable behavior change in follow-up research.",
+                "signal_basis": "Derived from highest drift_magnitude in current calibration window.",
+                "suggested_question": "How much has recent coverage changed your near-term behavior?",
+            },
+            {
+                "segment": hypothesis_segments[1],
+                "hypothesis": "The second-most affected segment will show a measurable shift if current coverage patterns persist.",
+                "signal_basis": "Fallback hypothesis used because the model response was invalid.",
+                "suggested_question": "How much has recent coverage changed your expected behavior this month?",
+            },
+            {
+                "segment": hypothesis_segments[2],
+                "hypothesis": "The third-most affected segment will show directional movement if uncertainty persists.",
+                "signal_basis": "Fallback hypothesis used because the model response was invalid.",
+                "suggested_question": "How likely are you to change a planned decision because of recent coverage?",
+            },
+        ],
+        generated_at=generated_at,
+        model_used=OLLAMA_MODEL,
+    )
+
+
 def clear_brief_cache() -> None:
     with _cache_lock:
         _brief_cache.clear()
@@ -102,18 +283,28 @@ def generate_brief(topic: str) -> ResearchBrief:
         top_articles.extend(_get_top_articles(real_topic, entry["segment"], limit=2))
 
     context_block = build_context_block(drift, top_articles)
-    data = _call_ollama_json(
-        BRIEF_TEMPLATE.format(
-            topic=topic,
-            date=generated_at,
-            context_block=context_block,
-            model=OLLAMA_MODEL,
+    data: dict | None = None
+    try:
+        data = _call_ollama_json(
+            BRIEF_TEMPLATE.format(
+                topic=topic,
+                date=generated_at,
+                context_block=context_block,
+                model=OLLAMA_MODEL,
+            )
         )
-    )
-    data["generated_at"] = generated_at
-    data["model_used"] = OLLAMA_MODEL
-    data["topic"] = topic
-    return ResearchBrief(**data)
+        data = _normalize_brief_payload(data)
+        data["generated_at"] = generated_at
+        data["model_used"] = OLLAMA_MODEL
+        data["topic"] = topic
+        logger.debug("[brief] normalized payload topic=%s data=%s", topic, data)
+        return ResearchBrief(**data)
+    except ValidationError as exc:
+        logger.warning("[brief] Validation failed topic=%s error=%s data=%s", topic, exc, data)
+        return _fallback_brief(topic, generated_at, drift, exc)
+    except (RuntimeError, ValueError) as exc:
+        logger.warning("[brief] Model output unusable topic=%s error=%s", topic, exc)
+        return _fallback_brief(topic, generated_at, drift, exc)
 
 
 def generate_brief_cached(topic: str) -> ResearchBrief:

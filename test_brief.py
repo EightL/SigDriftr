@@ -13,11 +13,13 @@ ValidationError = pydantic.ValidationError
 from brief.generator import (
     BRIEF_CACHE_TTL,
     OLLAMA_MODEL,
+    _call_ollama_json,
     clear_brief_cache,
     generate_brief,
     generate_brief_cached,
 )
 from brief.models import ResearchBrief
+from brief.prompt import BRIEF_TEMPLATE
 from delta.seeder import seed_baselines
 
 
@@ -208,6 +210,37 @@ def test_generate_brief_returns_valid_structured_brief() -> None:
         mock_call.assert_called_once()
     finally:
         cleanup_temp_db(temp_dir)
+
+
+def test_brief_prompt_requires_english_output() -> None:
+    assert BRIEF_TEMPLATE.startswith(
+        "IMPORTANT: Your entire response MUST be in English."
+    )
+
+
+def test_call_ollama_json_uses_larger_output_budget() -> None:
+    captured: dict[str, object] = {}
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self) -> bytes:
+            return b'{"response":"{\\"headline\\": \\"ok\\"}"}'
+
+    def fake_urlopen(request, timeout):
+        captured["timeout"] = timeout
+        captured["payload"] = json.loads(request.data.decode("utf-8"))
+        return FakeResponse()
+
+    with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+        result = _call_ollama_json("prompt")
+
+    assert result == {"headline": "ok"}
+    assert captured["payload"]["options"]["num_predict"] == 1024
 
 
 def test_generate_brief_normalizes_segment_aliases() -> None:

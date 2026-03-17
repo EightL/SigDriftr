@@ -69,7 +69,7 @@ def _call_ollama_json(prompt: str) -> dict:
             "prompt": prompt,
             "stream": False,
             "format": "json",
-            "options": {"temperature": 0.3, "num_predict": 512},
+            "options": {"temperature": 0.3, "num_predict": 1024},
         }
     ).encode("utf-8")
     request = urllib.request.Request(

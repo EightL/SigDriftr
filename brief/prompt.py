@@ -51,7 +51,9 @@ def build_context_block(drift_results: list[dict], top_articles: list[dict]) -> 
     return "\n".join(lines)
 
 
-BRIEF_TEMPLATE = """You are a Lakmoos AI research analyst writing a calibration brief.
+BRIEF_TEMPLATE = """IMPORTANT: Your entire response MUST be in English. Do not use Czech or any other language.
+
+You are a Lakmoos AI research analyst writing a calibration brief.
 
 Topic: {topic}
 Date: {date}

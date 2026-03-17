@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 
 import db.init
+from api.routes.brief import router as brief_router
 from api.routes.calibration import router as calibration_router
 from api.routes.collect import router as collect_router
 from api.routes.signals import router as signals_router
@@ -21,3 +22,4 @@ def startup() -> None:
 app.include_router(collect_router, prefix="")
 app.include_router(signals_router, prefix="")
 app.include_router(calibration_router, prefix="")
+app.include_router(brief_router, prefix="")

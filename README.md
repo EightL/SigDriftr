@@ -33,6 +33,9 @@ The current implementation is still a small single-process demo pipeline.
 
 ## Architecture
 
+![pipeline](/pipeline.drawio.pdf)
+
+
 ### 1. Storage
 
 SQLite is initialized on first use in [`db/init.py`](/home/osml/code/ml/SigDriftr/db/init.py).

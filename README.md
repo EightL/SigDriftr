@@ -33,7 +33,7 @@ The current implementation is still a small single-process demo pipeline.
 
 ## Architecture
 
-![pipeline](/pipeline.drawio.pdf)
+![pipeline](/plan.svg)
 
 
 ### 1. Storage

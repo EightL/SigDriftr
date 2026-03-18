@@ -306,7 +306,7 @@ def test_run_extraction_uses_article_topic_when_processing_all_topics() -> None:
         ) as mock_extract, patch(
             "extraction.extractor.extract_entities",
             return_value=[{"text": "Praha", "label": "GPE"}],
-        ), patch("extraction.extractor.update_feed_reward") as mock_update:
+        ), patch("extraction.extractor.record_signal_reward") as mock_reward:
             processed = extractor.run_extraction("")
 
         conn = db.init.get_conn()
@@ -337,7 +337,7 @@ def test_run_extraction_uses_article_topic_when_processing_all_topics() -> None:
     )
     assert raw_json["entities"] == [{"text": "Praha", "label": "GPE"}]
     assert entity_rows == [("Praha", "GPE")]
-    mock_update.assert_called_once()
+    mock_reward.assert_called_once()
 
 
 def test_ollama_request_parses_json_mode_response_directly() -> None:

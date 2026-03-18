@@ -45,4 +45,3 @@ app.mount(
     StaticFiles(directory=Path(__file__).parent / "static", html=True),
     name="ui",
 )
-app.routes[-1].methods = {"GET"}

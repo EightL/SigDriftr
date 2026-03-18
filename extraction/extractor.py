@@ -5,17 +5,10 @@ from config.feeds import FEEDS
 from db.init import get_conn
 from extraction.entities import extract_entities, normalize_entity_key
 from extraction.llm_client import extract_signals
-from ingestion.bandit import update_feed_reward
+from ingestion.bandit import record_signal_reward
 
 _OUTLET_AFFINITY = {feed["outlet"]: feed["affinity_tag"] for feed in FEEDS}
 _OUTLET_FEEDS = {feed["outlet"]: feed for feed in FEEDS}
-
-
-def _has_nonzero_signal(signals: dict) -> bool:
-    return (
-        float(signals.get("concern_level") or 0.0) > 0.05
-        or float(signals.get("avoidance_signals") or 0.0) > 0.05
-    )
 
 
 def run_extraction(topic: str, record_bandit_reward: bool = True) -> int:
@@ -32,7 +25,6 @@ def run_extraction(topic: str, record_bandit_reward: bool = True) -> int:
     ).fetchall()
 
     processed = 0
-    reward_batches: dict[tuple[str, str], dict[str, object]] = {}
 
     for article_id, title, summary, outlet, article_topic, published_at in rows:
         affinity_tag = _OUTLET_AFFINITY.get(outlet, "mainstream")
@@ -88,32 +80,15 @@ def run_extraction(topic: str, record_bandit_reward: bool = True) -> int:
                     ),
                 )
             if record_bandit_reward:
-                reward_key = (outlet, resolved_topic)
-                batch = reward_batches.setdefault(
-                    reward_key,
-                    {
-                        "feed": _OUTLET_FEEDS.get(outlet),
-                        "rewarded_at": datetime.now(timezone.utc).isoformat(),
-                        "nonzero_count": 0,
-                        "total_count": 0,
-                    },
+                feed = _OUTLET_FEEDS.get(outlet)
+                if feed is None:
+                    continue
+                record_signal_reward(
+                    outlet,
+                    resolved_topic,
+                    signals,
+                    when=published_at or extracted_at,
+                    feed=feed,
                 )
-                batch["total_count"] += 1
-                if _has_nonzero_signal(signals):
-                    batch["nonzero_count"] += 1
-
-    if record_bandit_reward:
-        for (outlet, resolved_topic), batch in reward_batches.items():
-            total_count = int(batch["total_count"])
-            if total_count <= 0 or batch["feed"] is None:
-                continue
-            reward = min(1.0, float(batch["nonzero_count"]) / max(1, total_count))
-            update_feed_reward(
-                outlet,
-                resolved_topic,
-                reward,
-                when=batch["rewarded_at"],
-                feed=batch["feed"],
-            )
 
     return processed

@@ -7,6 +7,8 @@ from unittest.mock import patch
 import db.init
 import pytest
 
+from config.feeds import FEEDS
+
 pytest.importorskip("pydantic")
 
 from brief.generator import clear_brief_cache, generate_brief
@@ -164,6 +166,7 @@ def test_end_to_end_pipeline_produces_brief_and_bandit_updates() -> None:
     finally:
         cleanup_temp_db(temp_dir)
 
+    assert any(configured_feed["outlet"] == "irozhlas" for configured_feed in FEEDS)
     assert inserted >= 1
     assert processed >= 1
     assert len(drift) == 4

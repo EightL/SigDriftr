@@ -787,7 +787,11 @@ def test_main_registers_brief_and_health_routes() -> None:
     pytest.importorskip("fastapi")
     import main
 
-    route_methods = {route.path: route.methods for route in main.app.routes}
+    route_methods = {
+        route.path: route.methods
+        for route in main.app.routes
+        if hasattr(route, "methods")
+    }
     assert "GET" in route_methods["/brief/{topic}"]
     assert "/health" in route_methods
     assert "POST" in route_methods["/pipeline/run"]

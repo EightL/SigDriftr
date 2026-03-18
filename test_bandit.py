@@ -178,7 +178,7 @@ def test_select_feeds_orders_visited_arms_by_descending_score() -> None:
     assert [feed["outlet"] for feed in selected] == ["alpha", "gamma", "beta"]
 
 
-def test_run_extraction_updates_bandit_using_signal_density() -> None:
+def test_run_extraction_updates_bandit_using_signal_rewards() -> None:
     pytest.importorskip("tenacity")
     from extraction.extractor import run_extraction
 
@@ -249,10 +249,10 @@ def test_run_extraction_updates_bandit_using_signal_density() -> None:
         cleanup_temp_db(temp_dir)
 
     assert processed == 6
-    assert irozhlas_snapshot["pulls"] == 1
-    assert idnes_snapshot["pulls"] == 1
-    assert irozhlas_snapshot["total_reward"] == 1.0
-    assert idnes_snapshot["total_reward"] == 0.3333
+    assert irozhlas_snapshot["pulls"] == 3
+    assert idnes_snapshot["pulls"] == 3
+    assert irozhlas_snapshot["total_reward"] == 0.84
+    assert idnes_snapshot["total_reward"] == 0.024
     assert [feed["outlet"] for feed in selected] == ["irozhlas", "idnes"]
 
 

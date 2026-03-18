@@ -18,7 +18,7 @@ def _has_nonzero_signal(signals: dict) -> bool:
     )
 
 
-def run_extraction(topic: str) -> int:
+def run_extraction(topic: str, record_bandit_reward: bool = True) -> int:
     conn = get_conn()
     rows = conn.execute(
         """
@@ -87,31 +87,33 @@ def run_extraction(topic: str) -> int:
                         entity_label,
                     ),
                 )
-            reward_key = (outlet, resolved_topic)
-            batch = reward_batches.setdefault(
-                reward_key,
-                {
-                    "feed": _OUTLET_FEEDS.get(outlet),
-                    "rewarded_at": datetime.now(timezone.utc).isoformat(),
-                    "nonzero_count": 0,
-                    "total_count": 0,
-                },
-            )
-            batch["total_count"] += 1
-            if _has_nonzero_signal(signals):
-                batch["nonzero_count"] += 1
+            if record_bandit_reward:
+                reward_key = (outlet, resolved_topic)
+                batch = reward_batches.setdefault(
+                    reward_key,
+                    {
+                        "feed": _OUTLET_FEEDS.get(outlet),
+                        "rewarded_at": datetime.now(timezone.utc).isoformat(),
+                        "nonzero_count": 0,
+                        "total_count": 0,
+                    },
+                )
+                batch["total_count"] += 1
+                if _has_nonzero_signal(signals):
+                    batch["nonzero_count"] += 1
 
-    for (outlet, resolved_topic), batch in reward_batches.items():
-        total_count = int(batch["total_count"])
-        if total_count <= 0 or batch["feed"] is None:
-            continue
-        reward = min(1.0, float(batch["nonzero_count"]) / max(1, total_count))
-        update_feed_reward(
-            outlet,
-            resolved_topic,
-            reward,
-            when=batch["rewarded_at"],
-            feed=batch["feed"],
-        )
+    if record_bandit_reward:
+        for (outlet, resolved_topic), batch in reward_batches.items():
+            total_count = int(batch["total_count"])
+            if total_count <= 0 or batch["feed"] is None:
+                continue
+            reward = min(1.0, float(batch["nonzero_count"]) / max(1, total_count))
+            update_feed_reward(
+                outlet,
+                resolved_topic,
+                reward,
+                when=batch["rewarded_at"],
+                feed=batch["feed"],
+            )
 
     return processed

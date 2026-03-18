@@ -7,3 +7,4 @@ sentence-transformers
 transformers>=4.40
 torch
 aiofiles
+apscheduler>=3.10,<4.0

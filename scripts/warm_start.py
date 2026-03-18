@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+"""Replay historical signal data into the LinUCB bandit."""
+
 import argparse
 import sys
 from pathlib import Path
@@ -8,8 +10,7 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from db.init import get_conn
-from ingestion.bandit import reset_bandit_state, warm_start_from_history
+from ingestion.bandit import warm_start_from_history
 
 
 def main() -> int:
@@ -27,19 +28,14 @@ def main() -> int:
         default=None,
         help="Optional row limit for smaller warm-start runs.",
     )
-    parser.add_argument(
-        "--reset",
-        action="store_true",
-        help="Clear existing bandit state before replaying history.",
-    )
     args = parser.parse_args()
 
-    get_conn()
-    if args.reset:
-        reset_bandit_state()
-
-    updated = warm_start_from_history(topic=args.topic, limit=args.limit)
-    print(f"Updated bandit from {updated} historical signal rows.")
+    print(
+        "Warm-starting bandit "
+        f"(topic={args.topic or 'all'}, limit={args.limit or 'unlimited'})..."
+    )
+    replayed = warm_start_from_history(topic=args.topic, limit=args.limit)
+    print(f"Done. Replayed {replayed} signal records.")
     return 0
 
 

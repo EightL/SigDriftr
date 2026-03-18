@@ -205,6 +205,13 @@ def test_generate_brief_returns_valid_structured_brief() -> None:
         assert brief.drift_type == "concern_spike"
         assert brief.alert_level == "strong"
         assert brief.model_used == OLLAMA_MODEL
+        assert brief.confidence_context is not None
+        assert set(brief.confidence_context.segment_confidence.keys()) == {
+            "young_urban",
+            "family",
+            "senior",
+            "b2b",
+        }
         assert len(brief.hypotheses) == 3
         assert brief.hypotheses[0].segment == "senior"
         mock_call.assert_called_once()
@@ -783,5 +790,6 @@ def test_main_registers_brief_and_health_routes() -> None:
     route_methods = {route.path: route.methods for route in main.app.routes}
     assert "GET" in route_methods["/brief/{topic}"]
     assert "/health" in route_methods
+    assert "POST" in route_methods["/pipeline/run"]
     assert "/brief/{topic}/status" not in route_methods
     assert "/brief/{topic}/result" not in route_methods

@@ -67,6 +67,12 @@ _SEGMENT_DISPLAY_NAMES = {
 }
 
 
+def _copy_brief(brief: ResearchBrief, **updates: object) -> ResearchBrief:
+    if hasattr(brief, "model_copy"):
+        return brief.model_copy(update=updates)
+    return brief.copy(update=updates)
+
+
 def _call_ollama_json(prompt: str) -> dict:
     """Call local Ollama in JSON mode and return the parsed response object."""
     payload = json.dumps(
@@ -320,9 +326,7 @@ def _apply_confidence_language(
     ) and LOW_CONFIDENCE_WARNING not in narrative:
         narrative = f"{LOW_CONFIDENCE_WARNING} {narrative}".strip()
 
-    if hasattr(brief, "model_copy"):
-        return brief.model_copy(update={"narrative": narrative})
-    return brief.copy(update={"narrative": narrative})
+    return _copy_brief(brief, narrative=narrative)
 
 
 def clear_brief_cache() -> None:
@@ -385,19 +389,22 @@ def generate_brief(topic: str) -> ResearchBrief:
         data["model_used"] = OLLAMA_MODEL
         data["topic"] = topic
         logger.debug("[brief] normalized payload topic=%s data=%s", topic, data)
-        return _apply_confidence_language(ResearchBrief(**data), drift)
+        brief = _apply_confidence_language(ResearchBrief(**data), drift)
+        return _copy_brief(brief, confidence_context=confidence_context)
     except ValidationError as exc:
         logger.warning("[brief] Validation failed topic=%s error=%s data=%s", topic, exc, data)
-        return _apply_confidence_language(
+        brief = _apply_confidence_language(
             _fallback_brief(topic, generated_at, drift, exc),
             drift,
         )
+        return _copy_brief(brief, confidence_context=confidence_context)
     except (RuntimeError, ValueError) as exc:
         logger.warning("[brief] Model output unusable topic=%s error=%s", topic, exc)
-        return _apply_confidence_language(
+        brief = _apply_confidence_language(
             _fallback_brief(topic, generated_at, drift, exc),
             drift,
         )
+        return _copy_brief(brief, confidence_context=confidence_context)
 
 
 def generate_brief_cached(topic: str) -> ResearchBrief:

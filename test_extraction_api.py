@@ -110,12 +110,13 @@ def test_extract_route_runs_extraction() -> None:
 
     with patch("api.routes.signals.run_extraction", return_value=3) as mock_extract, patch(
         "api.routes.signals.compute_segment_profiles"
-    ) as mock_profiles:
+    ) as mock_profiles, patch("api.routes.signals.clear_brief_cache") as mock_clear_cache:
         result = signals_route.extract("inflace")
 
     assert result == {"processed": 3, "topic": "inflace"}
     mock_extract.assert_called_once_with("inflace")
     mock_profiles.assert_called_once_with("inflace", learn_baseline=True)
+    mock_clear_cache.assert_called_once_with()
 
 
 def test_get_signals_schedules_passive_baseline_learning() -> None:
@@ -142,20 +143,108 @@ def test_get_signals_schedules_passive_baseline_learning() -> None:
     mock_profiles.assert_called_once_with("inflace", 7, True)
 
 
-def test_collect_route_awaits_async_crawler() -> None:
+def test_collect_route_runs_collection_cycle() -> None:
     pytest.importorskip("fastapi")
     from api.routes import collect as collect_route
 
     async def run_test() -> None:
         with patch(
-            "api.routes.collect._crawl_async",
+            "api.routes.collect.run_collection_cycle",
             new_callable=AsyncMock,
-            return_value=4,
-        ) as mock_crawl:
+            return_value={
+                "inserted": 4,
+                "extracted": 3,
+                "rewards_recorded": 3,
+                "topic": "inflace",
+            },
+        ) as mock_collect:
             result = await collect_route.collect("inflace")
 
-        assert result == {"inserted": 4, "topic": "inflace"}
-        mock_crawl.assert_awaited_once_with("inflace")
+        assert result == {
+            "inserted": 4,
+            "extracted": 3,
+            "rewards_recorded": 3,
+            "topic": "inflace",
+        }
+        mock_collect.assert_awaited_once_with("inflace")
+
+    asyncio.run(run_test())
+
+
+def test_pipeline_route_returns_brief_summary() -> None:
+    pytest.importorskip("fastapi")
+    from api.routes import pipeline as pipeline_route
+    from brief.models import BriefConfidenceContext, ResearchBrief
+
+    async def run_test() -> None:
+        with patch(
+            "api.routes.pipeline.run_collection_cycle",
+            new_callable=AsyncMock,
+            return_value={
+                "inserted": 2,
+                "extracted": 2,
+                "rewards_recorded": 2,
+                "topic": "inflace",
+            },
+        ) as mock_collect, patch(
+            "api.routes.pipeline.generate_brief_cached",
+            return_value=ResearchBrief(
+                topic="inflace",
+                headline="Inflation concern rises among families",
+                narrative="Structured summary.",
+                most_affected_segment="family",
+                drift_type="concern_spike",
+                alert_level="mild",
+                confidence_context=BriefConfidenceContext(
+                    segment_confidence={
+                        "young_urban": 0.4,
+                        "family": 0.7,
+                        "senior": 0.5,
+                        "b2b": 0.3,
+                    }
+                ),
+                hypotheses=[
+                    {
+                        "segment": "family",
+                        "hypothesis": "Families will cut discretionary spending.",
+                        "signal_basis": "concern_level +0.12",
+                        "suggested_question": "How much has inflation coverage changed household spending?",
+                    },
+                    {
+                        "segment": "senior",
+                        "hypothesis": "Seniors remain cautious.",
+                        "signal_basis": "avoidance_signals +0.04",
+                        "suggested_question": "How likely are you to postpone purchases?",
+                    },
+                    {
+                        "segment": "young_urban",
+                        "hypothesis": "Young urban adults will delay non-essentials.",
+                        "signal_basis": "purchase_intent -0.03",
+                        "suggested_question": "How likely are you to delay a planned purchase?",
+                    },
+                ],
+                generated_at="2026-03-18T00:00:00+00:00",
+                model_used="qwen2.5:7b-instruct",
+            ),
+        ) as mock_brief:
+            result = await pipeline_route.run_pipeline("inflace")
+
+        assert result == {
+            "inserted": 2,
+            "extracted": 2,
+            "rewards_recorded": 2,
+            "topic": "inflace",
+            "brief_topic": "inflace",
+            "brief_alert_level": "mild",
+            "brief_confidence": {
+                "young_urban": 0.4,
+                "family": 0.7,
+                "senior": 0.5,
+                "b2b": 0.3,
+            },
+        }
+        mock_collect.assert_awaited_once_with("inflace")
+        mock_brief.assert_called_once_with("inflace")
 
     asyncio.run(run_test())
 

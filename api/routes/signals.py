@@ -3,6 +3,7 @@ import json
 from fastapi import APIRouter, BackgroundTasks
 
 from api.models import SignalRecord
+from brief.generator import clear_brief_cache
 from config.domains import get_domain_config
 from db.init import get_conn
 from delta.engine import compute_drift
@@ -17,6 +18,8 @@ router = APIRouter()
 def extract(topic: str = "") -> dict[str, int | str]:
     processed = run_extraction(topic)
     compute_segment_profiles(topic, learn_baseline=True)
+    if processed > 0:
+        clear_brief_cache()
     return {"processed": processed, "topic": topic}
 
 

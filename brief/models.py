@@ -43,5 +43,9 @@ class ResearchBrief(BaseModel):
     ]
     hypotheses: list[SurveyHypothesis] = Field(min_length=3, max_length=3)
     alert_level: Literal["none", "mild", "strong"]
+    confidence_context: BriefConfidenceContext | None = Field(
+        default=None,
+        description="Per-segment calibration metadata; None when not available.",
+    )
     generated_at: str
     model_used: str

@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from ingestion.crawler import _crawl_async
+from api.pipeline import run_collection_cycle
 
 
 router = APIRouter()
@@ -8,5 +8,4 @@ router = APIRouter()
 
 @router.post("/collect")
 async def collect(topic: str) -> dict[str, int | str]:
-    inserted = await _crawl_async(topic)
-    return {"inserted": inserted, "topic": topic}
+    return await run_collection_cycle(topic)

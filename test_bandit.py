@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import db.init
+import pytest
 
 from ingestion.bandit import (
     get_bandit_snapshot,
@@ -31,6 +32,25 @@ def cleanup_temp_db(temp_dir: tempfile.TemporaryDirectory) -> None:
         db.init._local.conn.close()
         delattr(db.init._local, "conn")
     temp_dir.cleanup()
+
+
+def insert_article(
+    article_id: str,
+    topic: str,
+    outlet: str,
+    title: str,
+    summary: str = "Summary",
+) -> None:
+    conn = db.init.get_conn()
+    conn.execute(
+        """
+        INSERT INTO articles
+        (id, outlet, title, summary, url, topic, published_at, fetched_at)
+        VALUES (?, ?, ?, ?, ?, ?, '2026-03-17T00:00:00+00:00', '2026-03-17T00:00:00+00:00')
+        """,
+        (article_id, outlet, title, summary, f"https://example.test/{article_id}", topic),
+    )
+    conn.commit()
 
 
 def test_reward_from_signals_uses_domain_weights() -> None:
@@ -156,6 +176,84 @@ def test_select_feeds_orders_visited_arms_by_descending_score() -> None:
         cleanup_temp_db(temp_dir)
 
     assert [feed["outlet"] for feed in selected] == ["alpha", "gamma", "beta"]
+
+
+def test_run_extraction_updates_bandit_using_signal_density() -> None:
+    pytest.importorskip("tenacity")
+    from extraction.extractor import run_extraction
+
+    temp_dir = setup_temp_db()
+    try:
+        feeds = [
+            {"outlet": "irozhlas", "rss_url": "https://www.irozhlas.cz/rss/irozhlas", "affinity_tag": "mainstream"},
+            {"outlet": "idnes", "rss_url": "https://servis.idnes.cz/rss.aspx", "affinity_tag": "mainstream"},
+        ]
+        for index in range(3):
+            insert_article(
+                article_id=f"irozhlas-{index}",
+                topic="inflace",
+                outlet="irozhlas",
+                title=f"irozhlas-{index}",
+            )
+            insert_article(
+                article_id=f"idnes-{index}",
+                topic="inflace",
+                outlet="idnes",
+                title=f"idnes-{index}",
+            )
+
+        def fake_extract_signals(
+            title: str,
+            summary: str,
+            affinity_tag: str = "mainstream",
+            topic: str = "",
+        ) -> dict:
+            if title.startswith("irozhlas"):
+                concern_level = 0.6
+                avoidance_signals = 0.2
+            elif title.endswith("-0"):
+                concern_level = 0.06
+                avoidance_signals = 0.0
+            else:
+                concern_level = 0.0
+                avoidance_signals = 0.0
+
+            return {
+                "concern_level": concern_level,
+                "purchase_intent": 0.0,
+                "avoidance_signals": avoidance_signals,
+                "dominant_frame": "fear",
+                "seg_young_urban": 0.25,
+                "seg_family": 0.25,
+                "seg_senior": 0.25,
+                "seg_b2b": 0.25,
+                "domain": "commerce",
+                "irrelevant_fields": [],
+            }
+
+        with patch(
+            "extraction.extractor.extract_signals",
+            side_effect=fake_extract_signals,
+        ), patch("extraction.extractor.extract_entities", return_value=[]):
+            processed = run_extraction("inflace")
+
+        irozhlas_snapshot = get_bandit_snapshot("irozhlas")
+        idnes_snapshot = get_bandit_snapshot("idnes")
+        selected = select_feeds(
+            "inflace",
+            now=datetime.now(timezone.utc),
+            k=2,
+            feeds=feeds,
+        )
+    finally:
+        cleanup_temp_db(temp_dir)
+
+    assert processed == 6
+    assert irozhlas_snapshot["pulls"] == 1
+    assert idnes_snapshot["pulls"] == 1
+    assert irozhlas_snapshot["total_reward"] == 1.0
+    assert idnes_snapshot["total_reward"] == 0.3333
+    assert [feed["outlet"] for feed in selected] == ["irozhlas", "idnes"]
 
 
 def test_crawl_records_zero_reward_for_selected_feed_with_no_relevant_matches() -> None:

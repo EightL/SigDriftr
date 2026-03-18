@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
+import asyncio
 import json
 import tempfile
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import db.init
 import pytest
@@ -79,6 +80,8 @@ def insert_signal(article_id: str) -> None:
 
 def test_get_signals_does_not_trigger_extraction() -> None:
     pytest.importorskip("fastapi")
+    from fastapi import BackgroundTasks
+
     from api.routes import signals as signals_route
 
     temp_dir = setup_temp_db()
@@ -87,7 +90,7 @@ def test_get_signals_does_not_trigger_extraction() -> None:
         insert_signal("article-1")
 
         with patch("api.routes.signals.run_extraction") as mock_extract:
-            rows = signals_route.get_signals("inflace")
+            rows = signals_route.get_signals("inflace", BackgroundTasks())
 
         assert len(rows) == 1
         assert rows[0]["article_id"] == "article-1"
@@ -105,11 +108,56 @@ def test_extract_route_runs_extraction() -> None:
     pytest.importorskip("fastapi")
     from api.routes import signals as signals_route
 
-    with patch("api.routes.signals.run_extraction", return_value=3) as mock_extract:
+    with patch("api.routes.signals.run_extraction", return_value=3) as mock_extract, patch(
+        "api.routes.signals.compute_segment_profiles"
+    ) as mock_profiles:
         result = signals_route.extract("inflace")
 
     assert result == {"processed": 3, "topic": "inflace"}
     mock_extract.assert_called_once_with("inflace")
+    mock_profiles.assert_called_once_with("inflace", learn_baseline=True)
+
+
+def test_get_signals_schedules_passive_baseline_learning() -> None:
+    pytest.importorskip("fastapi")
+    from fastapi import BackgroundTasks
+
+    from api.routes import signals as signals_route
+
+    temp_dir = setup_temp_db()
+    try:
+        insert_article("article-2", "inflace")
+        insert_signal("article-2")
+
+        background_tasks = BackgroundTasks()
+        with patch("api.routes.signals.compute_segment_profiles") as mock_profiles:
+            rows = signals_route.get_signals("inflace", background_tasks=background_tasks)
+
+            assert len(rows) == 1
+            mock_profiles.assert_not_called()
+            asyncio.run(background_tasks())
+    finally:
+        cleanup_temp_db(temp_dir)
+
+    mock_profiles.assert_called_once_with("inflace", 7, True)
+
+
+def test_collect_route_awaits_async_crawler() -> None:
+    pytest.importorskip("fastapi")
+    from api.routes import collect as collect_route
+
+    async def run_test() -> None:
+        with patch(
+            "api.routes.collect._crawl_async",
+            new_callable=AsyncMock,
+            return_value=4,
+        ) as mock_crawl:
+            result = await collect_route.collect("inflace")
+
+        assert result == {"inserted": 4, "topic": "inflace"}
+        mock_crawl.assert_awaited_once_with("inflace")
+
+    asyncio.run(run_test())
 
 
 def test_run_extraction_passes_topic_to_signal_extractor() -> None:

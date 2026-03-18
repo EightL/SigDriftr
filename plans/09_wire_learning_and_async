@@ -1,0 +1,79 @@
+# 09_wire_learning_and_async
+
+Goal: Wire the two remaining broken callpaths — baseline self-learning and bandit reward feedback — so the system actually improves over time instead of staying frozen on seeded values.
+
+Fits in pipeline: Post-extraction hooks in the /extract endpoint and the extract() function in the API layer. Touches delta/engine.py, api/, and ingestion/bandit.py reward path.
+
+Inputs:
+- Existing `delta/mapper.py` with `learn_baseline` param already implemented but never called with True
+- Existing `update_baseline_from_profile()` in `delta/engine.py` — fully implemented, never invoked
+- Existing `ingestion/bandit.py` with `update()` — implemented but reward is never computed and passed in
+- Existing `extraction/extractor.py` returning signal dicts per article
+
+Outputs:
+- After every `/extract?topic=X` call, baselines self-update when article_count >= MIN_ARTICLES_FOR_BASELINE
+- After every crawl+extract cycle, bandit receives a reward signal per feed
+- No new modules needed — only wiring changes in existing files
+
+---
+
+## Steps
+
+1. **Find the /extract endpoint entry point**
+   - Open `api/` directory and locate the router that handles `POST /extract`.
+   - Identify where `extract_signals()` or equivalent is called and results are stored to DB.
+
+2. **Wire `learn_baseline=True` after extraction**
+   - After signals are written to the DB in the extract flow, call:
+     `compute_segment_profiles(topic, days_back=7, learn_baseline=True)`
+   - This already handles the MIN_ARTICLES_FOR_BASELINE guard internally.
+   - Do NOT call this on every single article insert — call it once at the end of a full `/extract` batch.
+
+3. **Compute and deliver bandit reward**
+   - After extraction for a batch of articles from a given outlet/feed, compute the reward:
+     - Simple formula: `reward = min(1.0, len(articles_with_nonzero_signal) / max(1, total_articles_fetched))`
+     - "nonzero signal" = concern_level > 0.05 OR avoidance_signals > 0.05
+   - Call `bandit.update(outlet_name, context_vector, reward)` for each outlet that was crawled.
+   - The context vector construction already exists in `bandit.py` — reuse `_build_context(topic, feed, now)` if it exists, otherwise construct `(topic_bucket, affinity_onehot, hour_bucket)` inline same as in `select_feeds`.
+
+4. **Verify `crawl()` → `_crawl_async()` is awaited correctly from FastAPI**
+   - FastAPI is async. `crawl()` raises `RuntimeError` if called inside a running loop (this is already guarded).
+   - In the `/collect` endpoint, confirm it calls `await _crawl_async(topic)` directly, not `crawl(topic)`.
+   - If it currently calls `crawl(topic)`, fix it to `await ingestion.crawler._crawl_async(topic)`.
+
+5. **Add `learn_baseline` call to the `/signals` endpoint as a side-effect (optional but useful)**
+   - On `GET /signals?topic=X`, after fetching drift results, also fire `compute_segment_profiles(topic, learn_baseline=True)` as a background task (`fastapi.BackgroundTasks`) so browsing the dashboard triggers learning passively.
+
+6. **Test**
+   - In `test_baseline_confidence.py` or a new `test_wiring.py`:
+     - Insert 35 dummy articles + signals for topic `test_wire` into the DB.
+     - Call `compute_segment_profiles("test_wire", learn_baseline=True)`.
+     - Assert at least one baseline for `test_wire` now has `is_learned=1` and `sample_count >= 1`.
+   - In `test_bandit.py` or a new test:
+     - Mock the extract output for 2 feeds with different signal densities.
+     - Call `bandit.update()` for both.
+     - Assert the higher-reward feed gets a higher UCB score on the next `select_feeds()` call.
+
+---
+
+## File paths to touch
+- `api/` — find the collect and extract route handlers (likely `api/routes.py` or `api/main.py`)
+- `delta/mapper.py` — no changes needed, `learn_baseline` param already works
+- `delta/engine.py` — no changes needed
+- `ingestion/bandit.py` — verify `update()` signature; use it
+- `ingestion/crawler.py` — verify `_crawl_async` is awaited from FastAPI, not wrapped in `crawl()`
+- `test_wiring.py` (new) or extend existing test files
+
+## pip dependencies
+No new dependencies. All required packages already in `requirements.txt`.
+
+## One test to confirm it works
+```python
+# After inserting 35 dummy signals and calling compute_segment_profiles(..., learn_baseline=True):
+conn = get_conn()
+row = conn.execute(
+    "SELECT is_learned, sample_count FROM baselines WHERE topic='test_wire' LIMIT 1"
+).fetchone()
+assert row is not None
+assert row == 1   # is_learned
+assert row >= 1   # sample_count[1]

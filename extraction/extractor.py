@@ -5,10 +5,17 @@ from config.feeds import FEEDS
 from db.init import get_conn
 from extraction.entities import extract_entities, normalize_entity_key
 from extraction.llm_client import extract_signals
-from ingestion.bandit import reward_from_signals, update_feed_reward
+from ingestion.bandit import update_feed_reward
 
 _OUTLET_AFFINITY = {feed["outlet"]: feed["affinity_tag"] for feed in FEEDS}
 _OUTLET_FEEDS = {feed["outlet"]: feed for feed in FEEDS}
+
+
+def _has_nonzero_signal(signals: dict) -> bool:
+    return (
+        float(signals.get("concern_level") or 0.0) > 0.05
+        or float(signals.get("avoidance_signals") or 0.0) > 0.05
+    )
 
 
 def run_extraction(topic: str) -> int:
@@ -85,22 +92,25 @@ def run_extraction(topic: str) -> int:
                 reward_key,
                 {
                     "feed": _OUTLET_FEEDS.get(outlet),
-                    "published_at": published_at or extracted_at,
-                    "rewards": [],
+                    "rewarded_at": datetime.now(timezone.utc).isoformat(),
+                    "nonzero_count": 0,
+                    "total_count": 0,
                 },
             )
-            batch["rewards"].append(reward_from_signals(resolved_topic, signals))
+            batch["total_count"] += 1
+            if _has_nonzero_signal(signals):
+                batch["nonzero_count"] += 1
 
     for (outlet, resolved_topic), batch in reward_batches.items():
-        rewards = batch["rewards"]
-        if not rewards or batch["feed"] is None:
+        total_count = int(batch["total_count"])
+        if total_count <= 0 or batch["feed"] is None:
             continue
-        average_reward = sum(rewards) / len(rewards)
+        reward = min(1.0, float(batch["nonzero_count"]) / max(1, total_count))
         update_feed_reward(
             outlet,
             resolved_topic,
-            average_reward,
-            when=batch["published_at"],
+            reward,
+            when=batch["rewarded_at"],
             feed=batch["feed"],
         )
 

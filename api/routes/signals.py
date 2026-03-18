@@ -1,6 +1,6 @@
 import json
 
-from fastapi import APIRouter
+from fastapi import APIRouter, BackgroundTasks
 
 from api.models import SignalRecord
 from config.domains import get_domain_config
@@ -21,7 +21,10 @@ def extract(topic: str = "") -> dict[str, int | str]:
 
 
 @router.get("/signals", response_model=list[SignalRecord])
-def get_signals(topic: str = "") -> list[dict]:
+def get_signals(
+    topic: str = "",
+    background_tasks: BackgroundTasks = None,
+) -> list[dict]:
     conn = get_conn()
     drift = compute_drift(topic)
     segment_confidence = {
@@ -69,5 +72,8 @@ def get_signals(topic: str = "") -> list[dict]:
                 "segment_confidence": segment_confidence,
             }
         )
+
+    if topic and background_tasks is not None:
+        background_tasks.add_task(compute_segment_profiles, topic, 7, True)
 
     return records

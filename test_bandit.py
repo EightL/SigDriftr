@@ -103,6 +103,61 @@ def test_select_feeds_shifts_toward_high_reward_sources() -> None:
     assert selected[0]["outlet"] == "alpha"
 
 
+def test_select_feeds_orders_visited_arms_by_descending_score() -> None:
+    temp_dir = setup_temp_db()
+    try:
+        feeds = [
+            {"outlet": "alpha", "rss_url": "https://alpha.test/rss", "affinity_tag": "mainstream"},
+            {"outlet": "beta", "rss_url": "https://beta.test/rss", "affinity_tag": "b2b"},
+            {"outlet": "gamma", "rss_url": "https://gamma.test/rss", "affinity_tag": "family"},
+        ]
+        when = datetime(2026, 3, 18, 9, 0, tzinfo=timezone.utc)
+
+        for _ in range(3):
+            record_signal_reward(
+                "alpha",
+                "inflace",
+                {
+                    "domain": "commerce",
+                    "concern_level": 0.9,
+                    "purchase_intent": 0.9,
+                    "avoidance_signals": 0.7,
+                },
+                when=when,
+                feed=feeds[0],
+            )
+            record_signal_reward(
+                "beta",
+                "inflace",
+                {
+                    "domain": "commerce",
+                    "concern_level": 0.1,
+                    "purchase_intent": 0.0,
+                    "avoidance_signals": 0.0,
+                },
+                when=when,
+                feed=feeds[1],
+            )
+            record_signal_reward(
+                "gamma",
+                "inflace",
+                {
+                    "domain": "commerce",
+                    "concern_level": 0.2,
+                    "purchase_intent": 0.1,
+                    "avoidance_signals": 0.1,
+                },
+                when=when,
+                feed=feeds[2],
+            )
+
+        selected = select_feeds("inflace", now=when, k=3, feeds=feeds)
+    finally:
+        cleanup_temp_db(temp_dir)
+
+    assert [feed["outlet"] for feed in selected] == ["alpha", "gamma", "beta"]
+
+
 def test_crawl_records_zero_reward_for_selected_feed_with_no_relevant_matches() -> None:
     temp_dir = setup_temp_db()
     try:

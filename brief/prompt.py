@@ -107,6 +107,24 @@ def build_context_block(
                 f"{index}. [{article.get('segment', '?')}] {title} — {summary}"
             )
 
+        entity_counts: dict[str, int] = {}
+        for article in top_articles[:5]:
+            for entity in article.get("entities", []):
+                text = str(entity.get("text", "")).strip()
+                label = str(entity.get("label", "")).strip()
+                if not text or not label:
+                    continue
+                key = f"{text} ({label})"
+                entity_counts[key] = entity_counts.get(key, 0) + 1
+        if entity_counts:
+            ranked_entities = sorted(
+                entity_counts.items(),
+                key=lambda item: (-item[1], item[0]),
+            )[:5]
+            lines.append("\n## Repeated Named Entities")
+            for entity, count in ranked_entities:
+                lines.append(f"- {entity}: {count} mentions")
+
     if drift_results and all_low_confidence:
         lines.insert(1, LOW_CONFIDENCE_WARNING)
 

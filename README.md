@@ -8,11 +8,11 @@ It is a demo pipeline, not a production system. The code is built around a local
 
 For a given topic, the project does this:
 
-1. Fetches articles from a fixed list of Czech RSS feeds.
+1. Uses a persistent LinUCB bandit to choose a subset of Czech RSS feeds for the topic.
 2. Filters articles for topic relevance.
 3. Stores matching articles in SQLite.
 4. Sends each unprocessed article title and summary to Ollama and asks for structured behavioral signals.
-5. Stores one signal row per article.
+5. Stores one signal row per article, with optional named-entity enrichment when a Czech spaCy model is available.
 6. Aggregates those signals into four audience segments:
    `young_urban`, `family`, `senior`, `b2b`
 7. Compares the current segment profile to a seeded baseline for the same topic.
@@ -26,13 +26,10 @@ For a given topic, the project does this:
 
 This repo does not implement several things mentioned in the project context notes:
 
-- no contextual bandit or source selection logic
-- no spaCy pipeline
 - no vector database
-- no rolling long-term baseline model beyond the seeded per-topic baselines in SQLite
 - no auth, jobs, queues, or multi-worker deployment story
 
-The current implementation is a direct synchronous demo pipeline.
+The current implementation is still a small single-process demo pipeline.
 
 ## Architecture
 
@@ -40,12 +37,13 @@ The current implementation is a direct synchronous demo pipeline.
 
 SQLite is initialized on first use in [`db/init.py`](/home/osml/code/ml/SigDriftr/db/init.py).
 
-The database contains four tables:
+The database contains five tables:
 
 - `articles`: RSS article metadata and the user-supplied topic used during collection
 - `signals`: one extracted signal payload per article
 - `segment_profiles`: aggregated segment-level metrics for a time window
 - `baselines`: seeded baseline values per `(topic, segment)`
+- `bandit_state`: persistent LinUCB arm parameters per outlet
 
 SQLite is configured with WAL mode and a per-thread connection.
 
@@ -54,6 +52,7 @@ SQLite is configured with WAL mode and a per-thread connection.
 RSS ingestion lives in [`ingestion/crawler.py`](/home/osml/code/ml/SigDriftr/ingestion/crawler.py) and feed configuration lives in [`config/feeds.py`](/home/osml/code/ml/SigDriftr/config/feeds.py).
 
 Current feeds are a fixed list of Czech outlets such as `irozhlas`, `wave`, `idnes`, `novinky`, `e15`, `blesk`, `maminka`, and `ct24`.
+Each crawl selects only the top-scoring subset for the current topic and hour, then fetches those feeds concurrently.
 
 Topic filtering is done in two passes:
 
@@ -61,6 +60,7 @@ Topic filtering is done in two passes:
 - otherwise the code tries a multilingual sentence-transformer similarity check using `paraphrase-multilingual-MiniLM-L12-v2`
 
 If the embedding model cannot be loaded, the semantic fallback is effectively disabled and only direct string matches pass.
+When a selected feed yields no relevant matches, the crawler writes a zero-reward update back into the bandit so poor sources are gradually deprioritized.
 
 Relevant articles are inserted with `INSERT OR IGNORE`, keyed by a SHA-256 hash of the article URL.
 
@@ -72,6 +72,7 @@ Signal extraction is split across:
 - [`extraction/llm_client.py`](/home/osml/code/ml/SigDriftr/extraction/llm_client.py)
 
 The extractor reads articles that do not yet have a row in `signals`, sends the article title and summary to Ollama, and stores a normalized JSON result.
+If `spacy` plus `cs_core_news_sm` are available, it also stores a compact list of named entities in `raw_json`.
 
 The primary extraction model is:
 
@@ -98,6 +99,7 @@ Post-processing then:
 - restricts `dominant_frame` to `fear`, `opportunity`, `conflict`, or `neutral`
 - softmax-normalizes the segment weights
 - blends segment weights with a fixed feed affinity prior
+- writes per-outlet reward updates back to the feed bandit based on the extracted signal density
 
 That last step matters: outlet-specific priors from [`config/feeds.py`](/home/osml/code/ml/SigDriftr/config/feeds.py) bias the segment relevance scores so, for example, some feeds lean more toward `b2b` or `family`.
 
@@ -126,8 +128,9 @@ For each `(topic, segment)` pair:
 - baselines are seeded on demand if missing
 - current segment signals are compared against the stored baseline
 - deltas are computed for the three numeric signals
-- drift magnitude is the sum of absolute deltas
+- drift magnitude is a domain-weighted sum of absolute deltas
 - frame shift is `true` if the current dominant frame differs from the baseline frame
+- confidence and learned-baseline metadata are attached to every segment result
 
 Alert levels are:
 
@@ -136,7 +139,7 @@ Alert levels are:
 - `mild` if drift magnitude is at least `0.20`
 - `strong` if drift magnitude is at least `0.45`
 
-There is also an `update_baseline_from_profile()` function that blends old and new baseline values, but nothing in the API currently calls it.
+Baseline learning is triggered from the extraction route after segment profiles are recomputed.
 
 ### 6. Brief generation
 

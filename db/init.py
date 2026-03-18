@@ -112,6 +112,19 @@ def get_conn() -> sqlite3.Connection:
             );
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS bandit_state (
+                outlet       TEXT PRIMARY KEY,
+                context_dim  INTEGER NOT NULL,
+                a_json       TEXT NOT NULL,
+                b_json       TEXT NOT NULL,
+                pulls        INTEGER NOT NULL DEFAULT 0,
+                total_reward REAL NOT NULL DEFAULT 0.0,
+                updated_at   TEXT NOT NULL
+            );
+            """
+        )
         run_migrations(conn)
         conn.commit()
         _local.conn = conn

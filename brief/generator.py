@@ -102,7 +102,7 @@ def _get_top_articles(topic: str, segment: str, limit: int = 2) -> list[dict]:
     conn = get_conn()
     seg_col = f"s.seg_{segment}"
     query = f"""
-        SELECT a.title, a.summary, {seg_col} AS relevance, s.extracted_at
+        SELECT a.title, a.summary, {seg_col} AS relevance, s.extracted_at, s.raw_json
         FROM signals s
         JOIN articles a ON s.article_id = a.id
         WHERE {seg_col} > 0.3
@@ -121,6 +121,7 @@ def _get_top_articles(topic: str, segment: str, limit: int = 2) -> list[dict]:
             "summary": row[1],
             "relevance": row[2],
             "extracted_at": row[3],
+            "entities": json.loads(row[4]).get("entities", []) if row[4] else [],
             "segment": segment,
         }
         for row in rows

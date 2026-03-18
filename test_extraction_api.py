@@ -146,6 +146,53 @@ def test_run_extraction_passes_topic_to_signal_extractor() -> None:
     )
 
 
+def test_run_extraction_uses_article_topic_when_processing_all_topics() -> None:
+    from extraction import extractor
+
+    temp_dir = setup_temp_db()
+    try:
+        insert_article("article-all-topics", "politika")
+        with patch(
+            "extraction.extractor.extract_signals",
+            return_value={
+                "concern_level": 0.6,
+                "purchase_intent": 0.0,
+                "avoidance_signals": 0.2,
+                "dominant_frame": "fear",
+                "seg_young_urban": 0.25,
+                "seg_family": 0.25,
+                "seg_senior": 0.25,
+                "seg_b2b": 0.25,
+                "domain": "civic",
+                "irrelevant_fields": ["purchase_intent"],
+            },
+        ) as mock_extract, patch(
+            "extraction.extractor.extract_entities",
+            return_value=[{"text": "Praha", "label": "GPE"}],
+        ), patch("extraction.extractor.update_feed_reward") as mock_update:
+            processed = extractor.run_extraction("")
+
+        conn = db.init.get_conn()
+        raw_json = json.loads(
+            conn.execute(
+                "SELECT raw_json FROM signals WHERE article_id = ?",
+                ("article-all-topics",),
+            ).fetchone()[0]
+        )
+    finally:
+        cleanup_temp_db(temp_dir)
+
+    assert processed == 1
+    mock_extract.assert_called_once_with(
+        "Title",
+        "Summary",
+        affinity_tag="mainstream",
+        topic="politika",
+    )
+    assert raw_json["entities"] == [{"text": "Praha", "label": "GPE"}]
+    mock_update.assert_called_once()
+
+
 def test_ollama_request_parses_json_mode_response_directly() -> None:
     from extraction.llm_client import _ollama_request
 

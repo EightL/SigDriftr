@@ -179,6 +179,15 @@ def test_run_extraction_uses_article_topic_when_processing_all_topics() -> None:
                 ("article-all-topics",),
             ).fetchone()[0]
         )
+        entity_rows = conn.execute(
+            """
+            SELECT entity_text, entity_label
+            FROM article_entities
+            WHERE article_id = ?
+            ORDER BY entity_text ASC
+            """,
+            ("article-all-topics",),
+        ).fetchall()
     finally:
         cleanup_temp_db(temp_dir)
 
@@ -190,6 +199,7 @@ def test_run_extraction_uses_article_topic_when_processing_all_topics() -> None:
         topic="politika",
     )
     assert raw_json["entities"] == [{"text": "Praha", "label": "GPE"}]
+    assert entity_rows == [("Praha", "GPE")]
     mock_update.assert_called_once()
 
 

@@ -102,7 +102,7 @@ def _get_top_articles(topic: str, segment: str, limit: int = 2) -> list[dict]:
     conn = get_conn()
     seg_col = f"s.seg_{segment}"
     query = f"""
-        SELECT a.title, a.summary, {seg_col} AS relevance, s.extracted_at, s.raw_json
+        SELECT s.article_id, a.title, a.summary, {seg_col} AS relevance, s.extracted_at
         FROM signals s
         JOIN articles a ON s.article_id = a.id
         WHERE {seg_col} > 0.3
@@ -117,15 +117,39 @@ def _get_top_articles(topic: str, segment: str, limit: int = 2) -> list[dict]:
     rows = conn.execute(query, params).fetchall()
     return [
         {
-            "title": row[0],
-            "summary": row[1],
-            "relevance": row[2],
-            "extracted_at": row[3],
-            "entities": json.loads(row[4]).get("entities", []) if row[4] else [],
+            "article_id": row[0],
+            "title": row[1],
+            "summary": row[2],
+            "relevance": row[3],
+            "extracted_at": row[4],
             "segment": segment,
         }
         for row in rows
     ]
+
+
+def _load_entities_for_articles(article_ids: list[str]) -> dict[str, list[dict[str, str]]]:
+    if not article_ids:
+        return {}
+
+    conn = get_conn()
+    placeholders = ", ".join("?" for _ in article_ids)
+    rows = conn.execute(
+        f"""
+        SELECT article_id, entity_text, entity_label
+        FROM article_entities
+        WHERE article_id IN ({placeholders})
+        ORDER BY article_id ASC, entity_label ASC, entity_text ASC
+        """,
+        article_ids,
+    ).fetchall()
+
+    entities_by_article: dict[str, list[dict[str, str]]] = {}
+    for article_id, entity_text, entity_label in rows:
+        entities_by_article.setdefault(article_id, []).append(
+            {"text": entity_text, "label": entity_label}
+        )
+    return entities_by_article
 
 
 def _canonicalize_segment(value: str | None) -> str:
@@ -324,6 +348,11 @@ def generate_brief(topic: str) -> ResearchBrief:
     top_articles: list[dict] = []
     for entry in ranked_segments:
         top_articles.extend(_get_top_articles(real_topic, entry["segment"], limit=2))
+    entities_by_article = _load_entities_for_articles(
+        [article["article_id"] for article in top_articles]
+    )
+    for article in top_articles:
+        article["entities"] = entities_by_article.get(article["article_id"], [])
 
     confidence_context = BriefConfidenceContext(
         segment_confidence={

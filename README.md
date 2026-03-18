@@ -37,10 +37,11 @@ The current implementation is still a small single-process demo pipeline.
 
 SQLite is initialized on first use in [`db/init.py`](/home/osml/code/ml/SigDriftr/db/init.py).
 
-The database contains five tables:
+The database contains six tables:
 
 - `articles`: RSS article metadata and the user-supplied topic used during collection
 - `signals`: one extracted signal payload per article
+- `article_entities`: optional named entities per article, populated when spaCy is available
 - `segment_profiles`: aggregated segment-level metrics for a time window
 - `baselines`: seeded baseline values per `(topic, segment)`
 - `bandit_state`: persistent LinUCB arm parameters per outlet
@@ -72,7 +73,7 @@ Signal extraction is split across:
 - [`extraction/llm_client.py`](/home/osml/code/ml/SigDriftr/extraction/llm_client.py)
 
 The extractor reads articles that do not yet have a row in `signals`, sends the article title and summary to Ollama, and stores a normalized JSON result.
-If `spacy` plus `cs_core_news_sm` are available, it also stores a compact list of named entities in `raw_json`.
+If `spacy` plus `cs_core_news_sm` are available, it also stores a compact list of named entities in `article_entities` and mirrors them into `raw_json`.
 
 The primary extraction model is:
 

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import asyncio
 import tempfile
 from datetime import datetime, timezone
 from types import SimpleNamespace
@@ -99,6 +100,7 @@ def test_select_feeds_shifts_toward_high_reward_sources() -> None:
         cleanup_temp_db(temp_dir)
 
     assert [feed["outlet"] for feed in selected] == ["alpha", "beta"]
+    assert selected[0]["outlet"] == "alpha"
 
 
 def test_crawl_records_zero_reward_for_selected_feed_with_no_relevant_matches() -> None:
@@ -131,3 +133,15 @@ def test_crawl_records_zero_reward_for_selected_feed_with_no_relevant_matches() 
     assert inserted == 0
     assert snapshot["pulls"] == 1
     assert snapshot["total_reward"] == 0.0
+
+
+def test_crawl_raises_clear_error_inside_active_event_loop() -> None:
+    async def run_inside_loop() -> None:
+        try:
+            crawl("inflace")
+        except RuntimeError as exc:
+            assert "await _crawl_async(topic) instead" in str(exc)
+        else:
+            raise AssertionError("Expected crawl() to reject active event loops.")
+
+    asyncio.run(run_inside_loop())

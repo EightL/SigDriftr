@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 
 from config.feeds import FEEDS
 from db.init import get_conn
-from extraction.entities import extract_entities
+from extraction.entities import extract_entities, normalize_entity_key
 from extraction.llm_client import extract_signals
 from ingestion.bandit import reward_from_signals, update_feed_reward
 
@@ -64,6 +64,22 @@ def run_extraction(topic: str) -> int:
         )
         if cursor.rowcount:
             processed += 1
+            for entity in entities:
+                entity_text = entity["text"]
+                entity_label = entity["label"]
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO article_entities
+                    (article_id, entity_text, entity_norm, entity_label)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (
+                        article_id,
+                        entity_text,
+                        normalize_entity_key(entity_text),
+                        entity_label,
+                    ),
+                )
             reward_key = (outlet, resolved_topic)
             batch = reward_batches.setdefault(
                 reward_key,

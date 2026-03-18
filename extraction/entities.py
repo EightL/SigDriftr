@@ -18,6 +18,10 @@ def _normalize_entity_text(text: str) -> str:
     return " ".join(text.split()).strip()
 
 
+def normalize_entity_key(text: str) -> str:
+    return _normalize_entity_text(text).lower()
+
+
 def extract_entities(text: str, limit: int = 6) -> list[dict[str, str]]:
     if not text.strip():
         return []

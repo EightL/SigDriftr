@@ -190,6 +190,9 @@ def score_feed(
     feed: dict,
     when: datetime | str | None = None,
 ) -> dict[str, object]:
+    # This remains O(d^3) per feed because we solve the LinUCB system directly.
+    # At the current scale (small context, single-digit feeds) that is acceptable and
+    # keeps the implementation dependency-free; revisit if the feed set grows materially.
     state = _load_state(feed["outlet"])
     context = build_context_vector(topic, feed, when)
     theta = _solve_linear_system(state["a"], state["b"])
@@ -216,6 +219,10 @@ def select_feeds(
         return []
 
     scored = [score_feed(topic, feed, now) for feed in active_feeds]
+    # Order selected arms as:
+    # 1. unexplored feeds first, to guarantee some exploration
+    # 2. higher UCB score first among equally explored feeds
+    # 3. lower pull count as a final tie-breaker
     scored.sort(
         key=lambda item: (
             item["pulls"] > 0,

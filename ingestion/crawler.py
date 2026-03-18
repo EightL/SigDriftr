@@ -132,4 +132,16 @@ async def _crawl_async(topic: str) -> int:
 
 
 def crawl(topic: str) -> int:
-    return asyncio.run(_crawl_async(topic))
+    """Run the async crawler from sync code paths.
+
+    This wrapper assumes there is no active event loop. Async callers should
+    await `_crawl_async()` directly to avoid the usual `asyncio.run()` error.
+    """
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(_crawl_async(topic))
+    raise RuntimeError(
+        "crawl() is a synchronous wrapper and cannot run inside an active event loop; "
+        "await _crawl_async(topic) instead."
+    )

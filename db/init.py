@@ -80,6 +80,30 @@ def get_conn() -> sqlite3.Connection:
         )
         conn.execute(
             """
+            CREATE TABLE IF NOT EXISTS article_entities (
+                article_id   TEXT NOT NULL,
+                entity_text  TEXT NOT NULL,
+                entity_norm  TEXT NOT NULL,
+                entity_label TEXT NOT NULL,
+                PRIMARY KEY (article_id, entity_norm, entity_label),
+                FOREIGN KEY (article_id) REFERENCES articles(id)
+            );
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_article_entities_norm
+            ON article_entities(entity_norm, entity_label)
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_article_entities_article
+            ON article_entities(article_id)
+            """
+        )
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS segment_profiles (
                 id                TEXT PRIMARY KEY,
                 topic             TEXT NOT NULL,

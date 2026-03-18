@@ -4,6 +4,8 @@ Minimal demo pipeline for Czech RSS collection, local signal extraction, drift d
 
 ## File architecture
 
+![pipeline](/plan.svg)
+
 - `main.py` exposes the FastAPI app.
 - `ingestion/` collects and filters RSS articles.
 - `extraction/` turns articles into structured signals.

@@ -59,17 +59,10 @@ def seed_baselines(topics: list[str] | None = None) -> int:
     for topic in topics:
         for segment in SEGMENTS:
             row_id = hashlib.sha256(f"{topic}:{segment}".encode()).hexdigest()
-            existing = conn.execute(
-                "SELECT 1 FROM baselines WHERE id = ?",
-                (row_id,),
-            ).fetchone()
-            if existing:
-                continue
-
             prior = SEED_PRIORS[segment]
-            conn.execute(
+            cursor = conn.execute(
                 """
-                INSERT INTO baselines
+                INSERT OR IGNORE INTO baselines
                 (id, topic, segment, concern_level, purchase_intent,
                  avoidance_signals, dominant_frame, seeded, sample_count,
                  is_learned, updated_at)
@@ -86,7 +79,7 @@ def seed_baselines(topics: list[str] | None = None) -> int:
                     now,
                 ),
             )
-            inserted += 1
+            inserted += cursor.rowcount
 
     conn.commit()
     return inserted

@@ -394,6 +394,12 @@
       font-family: "Instrument Sans", sans-serif;
     }
 
+    .brief-headline.is-muted {
+      color: var(--muted);
+      font-size: 16px;
+      font-weight: 500;
+    }
+
     .brief-narrative {
       margin: 0 0 16px 0;
       color: #3e453f;
@@ -1368,24 +1374,30 @@
       return "warming";
     }
 
-    function briefStatusLabel(status) {
-      if (status === "insufficient_data") {
-        return "Status: insufficient data";
+    function getBriefStatusPresentation(status) {
+      const normalized = normalizeBriefStatus(status);
+      if (normalized === "insufficient_data") {
+        return {
+          status: normalized,
+          label: "Status: insufficient data",
+          note: "Too little recent coverage. This is a plain data-availability notice, not a drift finding.",
+          headlineClass: "brief-headline is-muted",
+        };
       }
-      if (status === "ready") {
-        return "Status: ready";
+      if (normalized === "warming") {
+        return {
+          status: normalized,
+          label: "Status: warming",
+          note: "Interpret with care: the baseline or coverage is still stabilizing.",
+          headlineClass: "brief-headline",
+        };
       }
-      return "Status: warming";
-    }
-
-    function briefStatusNote(status) {
-      if (status === "insufficient_data") {
-        return "Too little recent coverage; this is a data-availability notice, not a drift finding.";
-      }
-      if (status === "warming") {
-        return "Warming up: the baseline or coverage is still stabilizing, so interpret this brief cautiously.";
-      }
-      return "";
+      return {
+        status: normalized,
+        label: "Status: ready",
+        note: "",
+        headlineClass: "brief-headline",
+      };
     }
 
     function applyBriefStatus(element, data) {
@@ -1398,14 +1410,17 @@
         return;
       }
 
-      element.setAttribute("data-brief-status", normalizeBriefStatus(data.status));
+      element.setAttribute(
+        "data-brief-status",
+        getBriefStatusPresentation(data.status).status,
+      );
     }
 
     function briefStatusAttribute(data) {
       if (!data || typeof data !== "object") {
         return "";
       }
-      return `data-brief-status="${escapeHtml(normalizeBriefStatus(data.status))}"`;
+      return `data-brief-status="${escapeHtml(getBriefStatusPresentation(data.status).status)}"`;
     }
 
     function formatBriefContent(data) {
@@ -1413,17 +1428,18 @@
         return '<div class="brief-empty">&gt; no brief available for this topic</div>';
       }
 
-      const status = normalizeBriefStatus(data.status);
+      const statusPresentation = getBriefStatusPresentation(data.status);
+      const status = statusPresentation.status;
       const statusBanner = `
-        <div class="brief-status-banner ${status}">${escapeHtml(briefStatusLabel(status))}</div>
+        <div class="brief-status-banner ${status}">${escapeHtml(statusPresentation.label)}</div>
       `;
-      const statusNoteText = briefStatusNote(status);
+      const statusNoteText = statusPresentation.note;
       const statusNote = statusNoteText
         ? `<p class="brief-status-note">${escapeHtml(statusNoteText)}</p>`
         : "";
 
       const headline = data.headline
-        ? `<h3 class="brief-headline">${escapeHtml(data.headline)}</h3>`
+        ? `<h3 class="${escapeHtml(statusPresentation.headlineClass)}">${escapeHtml(data.headline)}</h3>`
         : "";
       const narrative = data.narrative
         ? `<p class="brief-narrative">${escapeHtml(data.narrative)}</p>`

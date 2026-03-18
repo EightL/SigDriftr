@@ -8,6 +8,9 @@ import db.init
 import pytest
 
 pytest.importorskip("tenacity")
+pytest.importorskip("pydantic")
+
+from brief.generator import clear_brief_cache
 
 
 def setup_temp_db() -> tempfile.TemporaryDirectory:
@@ -17,10 +20,12 @@ def setup_temp_db() -> tempfile.TemporaryDirectory:
         db.init._local.conn.close()
         delattr(db.init._local, "conn")
     db.init.get_conn()
+    clear_brief_cache()
     return temp_dir
 
 
 def cleanup_temp_db(temp_dir: tempfile.TemporaryDirectory) -> None:
+    clear_brief_cache()
     if hasattr(db.init._local, "conn"):
         db.init._local.conn.close()
         delattr(db.init._local, "conn")
@@ -249,6 +254,79 @@ def test_pipeline_route_returns_brief_summary() -> None:
         mock_brief.assert_called_once_with("inflace")
 
     asyncio.run(run_test())
+
+
+def test_brief_api_returns_trust_fields_for_cold_start_topic() -> None:
+    pytest.importorskip("fastapi")
+    TestClient = pytest.importorskip("fastapi.testclient").TestClient
+    from main import app
+
+    temp_dir = setup_temp_db()
+    try:
+        with patch(
+            "brief.generator._call_ollama_json",
+            side_effect=AssertionError("LLM should not run for insufficient_data."),
+        ):
+            with TestClient(app) as client:
+                response = client.get("/brief/cold-topic")
+    finally:
+        cleanup_temp_db(temp_dir)
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "insufficient_data"
+    assert payload["alert_level"] == "none"
+    assert "confidence_context" in payload
+    assert set(payload["confidence_context"].keys()) == {
+        "segment_confidence",
+        "baseline_is_learned",
+        "baseline_sample_count",
+    }
+    assert set(payload["confidence_context"]["segment_confidence"].keys()) == {
+        "young_urban",
+        "family",
+        "senior",
+        "b2b",
+    }
+
+
+def test_pipeline_api_returns_aligned_brief_trust_fields_for_cold_start_topic() -> None:
+    pytest.importorskip("fastapi")
+    TestClient = pytest.importorskip("fastapi.testclient").TestClient
+    from main import app
+
+    temp_dir = setup_temp_db()
+    try:
+        with patch(
+            "api.routes.pipeline.run_collection_cycle",
+            new_callable=AsyncMock,
+            return_value={
+                "inserted": 0,
+                "extracted": 0,
+                "rewards_recorded": 0,
+                "topic": "cold-topic",
+            },
+        ), patch(
+            "brief.generator._call_ollama_json",
+            side_effect=AssertionError("LLM should not run for insufficient_data."),
+        ):
+            with TestClient(app) as client:
+                response = client.post("/pipeline/run", params={"topic": "cold-topic"})
+    finally:
+        cleanup_temp_db(temp_dir)
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["brief_topic"] == "cold-topic"
+    assert payload["brief_status"] == "insufficient_data"
+    assert payload["brief_alert_level"] == "none"
+    assert "brief_confidence" in payload
+    assert set(payload["brief_confidence"].keys()) == {
+        "young_urban",
+        "family",
+        "senior",
+        "b2b",
+    }
 
 
 def test_run_extraction_passes_topic_to_signal_extractor() -> None:

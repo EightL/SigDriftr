@@ -173,6 +173,7 @@ def compute_drift(topic: str, days_back: int = 7) -> list[dict]:
                     "frame_shift": False,
                     "alert_level": "none",
                     "dominant_frame": profile["dominant_frame"],
+                    "baseline_frame": None,
                     "confidence": confidence,
                     "baseline_is_learned": is_learned,
                     "baseline_sample_count": sample_count,

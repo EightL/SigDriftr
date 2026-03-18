@@ -3,6 +3,7 @@ import argparse
 import hashlib
 import sys
 import tempfile
+from unittest.mock import patch
 
 import db.init
 from delta.engine import compute_drift, update_baseline_from_profile
@@ -185,6 +186,34 @@ def test_compute_drift_seeds_unknown_topics_on_demand() -> None:
         assert first_segment["baseline"] is not None
     finally:
         temp_dir.cleanup()
+
+
+def test_compute_drift_keeps_baseline_frame_key_when_baseline_missing() -> None:
+    temp_dir = setup_temp_db()
+    try:
+        insert_article_with_signal(
+            article_id="missing-baseline-1",
+            topic="custom-topic",
+            concern=0.8,
+            purchase=0.2,
+            avoidance=0.4,
+            frame="fear",
+            seg_young_urban=1.0,
+            seg_family=0.0,
+            seg_senior=0.0,
+            seg_b2b=0.0,
+        )
+
+        with patch("delta.engine._get_baseline", return_value=None):
+            drift = compute_drift("custom-topic")
+    finally:
+        temp_dir.cleanup()
+
+    drift_by_segment = {entry["segment"]: entry for entry in drift}
+    assert drift_by_segment["young_urban"]["baseline_frame"] is None
+    assert set(drift_by_segment["young_urban"].keys()) == set(
+        drift_by_segment["senior"].keys()
+    )
 
 
 def test_compute_segment_profiles_persists_requested_window_days() -> None:

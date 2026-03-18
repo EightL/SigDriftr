@@ -262,8 +262,11 @@ def test_build_context_block_omits_irrelevant_domain_signals() -> None:
 def test_generate_brief_returns_insufficient_data_without_calling_llm() -> None:
     temp_dir = setup_temp_db()
     try:
-        with patch("brief.generator._call_ollama_json") as mock_call:
-            brief = generate_brief("new-topic")
+        with patch(
+            "brief.generator._call_ollama_json",
+            side_effect=AssertionError("LLM should not run for a cold-start brief."),
+        ) as mock_call:
+            brief = generate_brief("cold-topic")
     finally:
         cleanup_temp_db(temp_dir)
 

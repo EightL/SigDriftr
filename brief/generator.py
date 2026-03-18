@@ -336,6 +336,8 @@ def generate_brief(topic: str) -> ResearchBrief:
         },
     )
     context_block = build_context_block(drift, top_articles, confidence_context)
+    domain = drift[0].get("domain", "generic") if drift else "generic"
+    relevant_fields = drift[0].get("relevant_fields", []) if drift else []
     data: dict | None = None
     try:
         data = _call_ollama_json(
@@ -343,6 +345,8 @@ def generate_brief(topic: str) -> ResearchBrief:
                 topic=topic,
                 date=generated_at,
                 context_block=context_block,
+                domain=domain,
+                relevant_fields=", ".join(relevant_fields) if relevant_fields else "none",
                 model=OLLAMA_MODEL,
             )
         )

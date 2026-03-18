@@ -3,6 +3,7 @@ import math
 import urllib.error
 import urllib.request
 
+from config.domains import DOMAIN_SIGNAL_KEYS, get_domain_config, topic_to_domain
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 
@@ -46,8 +47,11 @@ AFFINITY_PRIORS = {
 PROMPT_TEMPLATE = """
 You are a behavioral analyst specializing in Czech media. Analyze the article below.
 
+Topic: {topic}
 Article title: {title}
 Article summary: {summary}
+
+Domain guidance: {domain_hint}
 
 Output ONLY this JSON object (nothing before or after it):
 {{
@@ -121,6 +125,20 @@ def _normalize_signals(result: dict | None) -> dict:
     return normalized
 
 
+def _apply_domain_mask(signals: dict, domain: str) -> dict:
+    """Zero out signal fields that are not relevant to the resolved domain."""
+    config = get_domain_config(domain)
+    relevant = set(config["relevant_fields"])
+    irrelevant: list[str] = []
+    for key in DOMAIN_SIGNAL_KEYS:
+        if key not in relevant:
+            signals[key] = 0.0
+            irrelevant.append(key)
+    signals["domain"] = domain
+    signals["irrelevant_fields"] = irrelevant
+    return signals
+
+
 @retry(
     retry=retry_if_exception_type((urllib.error.URLError, TimeoutError, OSError)),
     stop=stop_after_attempt(3),
@@ -143,8 +161,19 @@ def _ollama_request(payload: bytes) -> dict | None:
     return json.loads(raw)
 
 
-def _try_ollama(title: str, summary: str, model: str) -> dict | None:
-    prompt = PROMPT_TEMPLATE.format(title=title, summary=summary)
+def _try_ollama(
+    title: str,
+    summary: str,
+    model: str,
+    topic: str,
+    domain_hint: str,
+) -> dict | None:
+    prompt = PROMPT_TEMPLATE.format(
+        topic=topic,
+        title=title,
+        summary=summary,
+        domain_hint=domain_hint,
+    )
     payload = json.dumps(
         {"model": model, "prompt": prompt, "stream": False, "format": "json"}
     ).encode("utf-8")
@@ -154,16 +183,24 @@ def _try_ollama(title: str, summary: str, model: str) -> dict | None:
         return None
 
 
-def _ollama_fallback(title: str, summary: str) -> dict | None:
+def _ollama_fallback(title: str, summary: str, topic: str, domain_hint: str) -> dict | None:
     """Fallback to a second Ollama model to keep inference GPU-backed."""
-    return _try_ollama(title, summary, OLLAMA_FALLBACK_MODEL)
+    return _try_ollama(title, summary, OLLAMA_FALLBACK_MODEL, topic, domain_hint)
 
 
-def extract_signals(title: str, summary: str, affinity_tag: str = "mainstream") -> dict:
-    result = _try_ollama(title, summary, OLLAMA_MODEL)
+def extract_signals(
+    title: str,
+    summary: str,
+    affinity_tag: str = "mainstream",
+    topic: str = "",
+) -> dict:
+    domain = topic_to_domain(topic)
+    domain_hint = str(get_domain_config(domain)["prompt_hint"])
+    result = _try_ollama(title, summary, OLLAMA_MODEL, topic, domain_hint)
     if result is None:
-        result = _ollama_fallback(title, summary)
+        result = _ollama_fallback(title, summary, topic, domain_hint)
     signals = _normalize_signals(result)
     signals = _softmax_segments(signals)
     signals = _apply_affinity_prior(signals, affinity_tag)
+    signals = _apply_domain_mask(signals, domain)
     return signals

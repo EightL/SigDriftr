@@ -1,4 +1,5 @@
 from brief.models import BriefConfidenceContext
+from config.domains import DOMAIN_SIGNAL_KEYS
 from config.settings import HIGH_BRIEF_CONFIDENCE, MIN_BRIEF_CONFIDENCE
 
 
@@ -14,6 +15,12 @@ FRAME_MEANINGS = {
     "opportunity": "articles emphasise gains, positive futures, and solutions",
     "conflict": "articles emphasise disagreement, opposition, and tension",
     "neutral": "articles are balanced or informational without strong framing",
+}
+
+SIGNAL_LABELS = {
+    "concern_level": "concern_level",
+    "purchase_intent": "purchase_intent",
+    "avoidance_signals": "avoidance_signals",
 }
 
 LOW_CONFIDENCE_WARNING = (
@@ -35,7 +42,17 @@ def build_context_block(
     confidence_context: BriefConfidenceContext | None = None,
 ) -> str:
     """Format drift data and grounding snippets into a compact prompt block."""
-    lines = ["## Drift Evidence"]
+    domain = drift_results[0].get("domain", "generic") if drift_results else "generic"
+    relevant_fields = (
+        list(drift_results[0].get("relevant_fields", [])) if drift_results else []
+    )
+    relevant_display = ", ".join(relevant_fields) if relevant_fields else "none"
+    lines = [
+        "## Domain Context",
+        f"Topic domain: {domain} | Relevant signals: {relevant_display}",
+        "",
+        "## Drift Evidence",
+    ]
     if confidence_context is None:
         confidence_context = BriefConfidenceContext()
 
@@ -72,13 +89,12 @@ def build_context_block(
         lines.append(
             f"- Baseline age (days): {baseline_age_days if baseline_age_days is not None else 'unknown'}"
         )
-        lines.append(f"- concern_level delta: {deltas.get('concern_level', 0.0):+.3f}")
-        lines.append(
-            f"- purchase_intent delta: {deltas.get('purchase_intent', 0.0):+.3f}"
-        )
-        lines.append(
-            f"- avoidance_signals delta: {deltas.get('avoidance_signals', 0.0):+.3f}"
-        )
+        for signal_key in DOMAIN_SIGNAL_KEYS:
+            if signal_key not in relevant_fields:
+                continue
+            lines.append(
+                f"- {SIGNAL_LABELS[signal_key]} delta: {deltas.get(signal_key, 0.0):+.3f}"
+            )
         lines.append(f"- Dominant frame: {frame} ({frame_desc})")
         lines.append(f"- Frame shifted vs baseline: {frame_shift}")
 
@@ -113,6 +129,9 @@ Choose the most affected segment based on drift magnitude, alert level, and arti
 Write exactly 3 hypotheses covering the most relevant segments.
 For each segment, qualify your language using the confidence level provided.
 Low-confidence segments must be framed as hypotheses, not conclusions.
+Domain: {domain}. Relevant signals for this domain: {relevant_fields}.
+Do NOT mention purchase behavior or purchase intent if "purchase_intent" is not in the relevant fields list.
+When ranking segments and writing hypotheses, only reference signals in the relevant fields list.
 Use ONLY canonical segment keys in `most_affected_segment` and every hypothesis `segment` field:
 `young_urban`, `family`, `senior`, `b2b`.
 Never use human-readable labels such as "young urban adults", "seniors", or "business decision-makers".

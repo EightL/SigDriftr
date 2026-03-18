@@ -1,6 +1,7 @@
 import hashlib
 from datetime import datetime, timezone
 
+from config.domains import get_domain_config, topic_to_domain
 from config.settings import (
     BASELINE_EMA_ALPHA,
     CONFIDENCE_ARTICLE_DENOMINATOR,
@@ -89,6 +90,10 @@ def _compute_confidence(
 def compute_drift(topic: str, days_back: int = 7) -> list[dict]:
     ensure_topic_baselines(topic)
     profiles = compute_segment_profiles(topic, days_back, learn_baseline=False)
+    domain = topic_to_domain(topic)
+    domain_config = get_domain_config(domain)
+    signal_weights = domain_config["signal_weights"]
+    relevant_fields = list(domain_config["relevant_fields"])
     results: list[dict] = []
 
     for profile in profiles:
@@ -129,6 +134,8 @@ def compute_drift(topic: str, days_back: int = 7) -> list[dict]:
                     "baseline_is_learned": is_learned,
                     "baseline_sample_count": sample_count,
                     "baseline_age_days": baseline_age_days,
+                    "domain": domain,
+                    "relevant_fields": relevant_fields,
                 }
             )
             continue
@@ -151,6 +158,8 @@ def compute_drift(topic: str, days_back: int = 7) -> list[dict]:
                     "baseline_is_learned": is_learned,
                     "baseline_sample_count": sample_count,
                     "baseline_age_days": baseline_age_days,
+                    "domain": domain,
+                    "relevant_fields": relevant_fields,
                 }
             )
             continue
@@ -159,7 +168,10 @@ def compute_drift(topic: str, days_back: int = 7) -> list[dict]:
             key: round(profile[key] - (baseline[key] or 0.0), 4)
             for key in SIGNAL_KEYS
         }
-        drift_magnitude = round(sum(abs(value) for value in deltas.values()), 4)
+        drift_magnitude = round(
+            sum(signal_weights.get(key, 0.0) * abs(delta) for key, delta in deltas.items()),
+            4,
+        )
         frame_shift = (
             canonicalize_frame(profile["dominant_frame"])
             != canonicalize_frame(baseline["dominant_frame"])
@@ -183,6 +195,8 @@ def compute_drift(topic: str, days_back: int = 7) -> list[dict]:
                 "baseline_is_learned": is_learned,
                 "baseline_sample_count": sample_count,
                 "baseline_age_days": baseline_age_days,
+                "domain": domain,
+                "relevant_fields": relevant_fields,
             }
         )
 

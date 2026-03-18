@@ -6,6 +6,8 @@ from unittest.mock import patch
 import db.init
 import pytest
 
+pytest.importorskip("tenacity")
+
 
 def setup_temp_db() -> tempfile.TemporaryDirectory:
     temp_dir = tempfile.TemporaryDirectory()
@@ -44,6 +46,8 @@ def insert_signal(article_id: str) -> None:
         "purchase_intent": 0.1,
         "avoidance_signals": 0.4,
         "dominant_frame": "fear",
+        "domain": "civic",
+        "irrelevant_fields": ["purchase_intent"],
         "seg_young_urban": 0.2,
         "seg_family": 0.3,
         "seg_senior": 0.4,
@@ -87,6 +91,11 @@ def test_get_signals_does_not_trigger_extraction() -> None:
 
         assert len(rows) == 1
         assert rows[0]["article_id"] == "article-1"
+        assert rows[0]["domain"] == "civic"
+        assert rows[0]["relevant_fields"] == [
+            "concern_level",
+            "avoidance_signals",
+        ]
         mock_extract.assert_not_called()
     finally:
         cleanup_temp_db(temp_dir)
@@ -101,6 +110,40 @@ def test_extract_route_runs_extraction() -> None:
 
     assert result == {"processed": 3, "topic": "inflace"}
     mock_extract.assert_called_once_with("inflace")
+
+
+def test_run_extraction_passes_topic_to_signal_extractor() -> None:
+    from extraction import extractor
+
+    temp_dir = setup_temp_db()
+    try:
+        insert_article("article-topic-pass", "politika")
+        with patch(
+            "extraction.extractor.extract_signals",
+            return_value={
+                "concern_level": 0.6,
+                "purchase_intent": 0.0,
+                "avoidance_signals": 0.2,
+                "dominant_frame": "fear",
+                "seg_young_urban": 0.25,
+                "seg_family": 0.25,
+                "seg_senior": 0.25,
+                "seg_b2b": 0.25,
+                "domain": "civic",
+                "irrelevant_fields": ["purchase_intent"],
+            },
+        ) as mock_extract:
+            processed = extractor.run_extraction("politika")
+    finally:
+        cleanup_temp_db(temp_dir)
+
+    assert processed == 1
+    mock_extract.assert_called_once_with(
+        "Title",
+        "Summary",
+        affinity_tag="mainstream",
+        topic="politika",
+    )
 
 
 def test_ollama_request_parses_json_mode_response_directly() -> None:

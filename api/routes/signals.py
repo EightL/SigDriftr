@@ -3,6 +3,7 @@ import json
 from fastapi import APIRouter
 
 from api.models import SignalRecord
+from config.domains import get_domain_config
 from db.init import get_conn
 from delta.engine import compute_drift
 from delta.mapper import compute_segment_profiles
@@ -45,21 +46,28 @@ def get_signals(topic: str = "") -> list[dict]:
         (topic, topic),
     ).fetchall()
 
-    return [
-        {
-            "article_id": row[1],
-            "topic": row[0],
-            "concern_level": row[2],
-            "purchase_intent": row[3],
-            "avoidance_signals": row[4],
-            "dominant_frame": row[5],
-            "seg_young_urban": row[6],
-            "seg_family": row[7],
-            "seg_senior": row[8],
-            "seg_b2b": row[9],
-            "raw_json": json.loads(row[10]) if row[10] else {},
-            "extracted_at": row[11],
-            "segment_confidence": segment_confidence,
-        }
-        for row in rows
-    ]
+    records: list[dict] = []
+    for row in rows:
+        raw_json = json.loads(row[10]) if row[10] else {}
+        domain = raw_json.get("domain", "generic")
+        records.append(
+            {
+                "article_id": row[1],
+                "topic": row[0],
+                "domain": domain,
+                "relevant_fields": list(get_domain_config(domain)["relevant_fields"]),
+                "concern_level": row[2],
+                "purchase_intent": row[3],
+                "avoidance_signals": row[4],
+                "dominant_frame": row[5],
+                "seg_young_urban": row[6],
+                "seg_family": row[7],
+                "seg_senior": row[8],
+                "seg_b2b": row[9],
+                "raw_json": raw_json,
+                "extracted_at": row[11],
+                "segment_confidence": segment_confidence,
+            }
+        )
+
+    return records

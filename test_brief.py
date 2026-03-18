@@ -19,7 +19,7 @@ from brief.generator import (
     generate_brief_cached,
 )
 from brief.models import ResearchBrief
-from brief.prompt import BRIEF_TEMPLATE, LOW_CONFIDENCE_WARNING
+from brief.prompt import BRIEF_TEMPLATE, LOW_CONFIDENCE_WARNING, build_context_block
 from delta.seeder import seed_baselines
 
 
@@ -216,6 +216,38 @@ def test_brief_prompt_requires_english_output() -> None:
     assert BRIEF_TEMPLATE.startswith(
         "IMPORTANT: Your entire response MUST be in English."
     )
+
+
+def test_build_context_block_omits_irrelevant_domain_signals() -> None:
+    context = build_context_block(
+        [
+            {
+                "segment": "senior",
+                "deltas": {
+                    "concern_level": 0.15,
+                    "purchase_intent": 0.8,
+                    "avoidance_signals": 0.2,
+                },
+                "dominant_frame": "fear",
+                "frame_shift": False,
+                "alert_level": "mild",
+                "article_count": 12,
+                "confidence": 0.7,
+                "baseline_is_learned": True,
+                "baseline_sample_count": 15,
+                "baseline_age_days": 2,
+                "domain": "civic",
+                "relevant_fields": ["concern_level", "avoidance_signals"],
+            }
+        ],
+        [],
+    )
+
+    assert "Topic domain: civic" in context
+    assert "Relevant signals: concern_level, avoidance_signals" in context
+    assert "purchase_intent delta" not in context
+    assert "concern_level delta: +0.150" in context
+    assert "avoidance_signals delta: +0.200" in context
 
 
 def test_call_ollama_json_uses_larger_output_budget() -> None:

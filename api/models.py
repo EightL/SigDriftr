@@ -11,6 +11,8 @@ class SegmentConfidence(BaseModel):
 class SignalRecord(BaseModel):
     article_id: str
     topic: str | None = None
+    domain: str | None = "generic"
+    relevant_fields: list[str] | None = None
     concern_level: float | None = None
     purchase_intent: float | None = None
     avoidance_signals: float | None = None
@@ -46,6 +48,8 @@ class CalibrationResponse(BaseModel):
     baseline: dict[str, float] | None = None
     current: dict[str, float] | None = None
     has_data: bool | None = None
+    domain: str | None = "generic"
+    relevant_fields: list[str] | None = None
 
 
 class DriftSegmentResponse(BaseModel):
@@ -65,6 +69,8 @@ class DriftSegmentResponse(BaseModel):
     baseline_is_learned: bool | None = None
     baseline_sample_count: int | None = None
     baseline_age_days: int | None = None
+    domain: str | None = "generic"
+    relevant_fields: list[str] | None = None
 
 
 class DriftResponse(BaseModel):

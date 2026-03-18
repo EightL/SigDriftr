@@ -115,6 +115,12 @@ def test_compute_drift_uses_weighted_segment_profiles() -> None:
         drift = compute_drift("inflace")
         drift_by_segment = {entry["segment"]: entry for entry in drift}
         assert drift_by_segment["young_urban"]["deltas"]["concern_level"] == 0.42
+        assert drift_by_segment["young_urban"]["domain"] == "commerce"
+        assert drift_by_segment["young_urban"]["relevant_fields"] == [
+            "concern_level",
+            "purchase_intent",
+            "avoidance_signals",
+        ]
         assert drift_by_segment["family"]["frame_shift"] is True
         assert drift_by_segment["senior"]["alert_level"] == "no_data"
         assert drift_by_segment["senior"]["deltas"] == {
@@ -257,8 +263,38 @@ def test_alert_level_uses_drift_magnitude() -> None:
 
         drift = compute_drift("inflace")
         young_urban = next(entry for entry in drift if entry["segment"] == "young_urban")
-        assert young_urban["drift_magnitude"] == 0.54
-        assert young_urban["alert_level"] == "strong"
+        assert young_urban["drift_magnitude"] == 0.18
+        assert young_urban["alert_level"] == "none"
+    finally:
+        temp_dir.cleanup()
+
+
+def test_compute_drift_uses_domain_weights_for_generic_topics() -> None:
+    temp_dir = setup_temp_db()
+    try:
+        seed_baselines(["custom-topic"])
+        insert_article_with_signal(
+            article_id="generic-weight-test",
+            topic="custom-topic",
+            concern=0.5,
+            purchase=0.9,
+            avoidance=0.9,
+            frame="neutral",
+            seg_young_urban=1.0,
+            seg_family=0.0,
+            seg_senior=0.0,
+            seg_b2b=0.0,
+        )
+
+        drift = compute_drift("custom-topic")
+        young_urban = next(entry for entry in drift if entry["segment"] == "young_urban")
+
+        assert young_urban["domain"] == "generic"
+        assert young_urban["relevant_fields"] == ["concern_level"]
+        assert young_urban["deltas"]["purchase_intent"] == 0.59
+        assert young_urban["deltas"]["avoidance_signals"] == 0.72
+        assert young_urban["drift_magnitude"] == 0.12
+        assert young_urban["alert_level"] == "none"
     finally:
         temp_dir.cleanup()
 

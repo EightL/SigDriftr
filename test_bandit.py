@@ -178,6 +178,36 @@ def test_select_feeds_orders_visited_arms_by_descending_score() -> None:
     assert [feed["outlet"] for feed in selected] == ["alpha", "gamma", "beta"]
 
 
+def test_record_signal_reward_accepts_rfc2822_timestamp() -> None:
+    temp_dir = setup_temp_db()
+    try:
+        feed = {
+            "outlet": "alpha",
+            "rss_url": "https://alpha.test/rss",
+            "affinity_tag": "mainstream",
+        }
+
+        reward = record_signal_reward(
+            "alpha",
+            "inflace",
+            {
+                "domain": "commerce",
+                "concern_level": 0.9,
+                "purchase_intent": 0.5,
+                "avoidance_signals": 0.2,
+            },
+            when="Wed, 18 Mar 2026 14:36:08 +0100",
+            feed=feed,
+        )
+        snapshot = get_bandit_snapshot("alpha")
+    finally:
+        cleanup_temp_db(temp_dir)
+
+    assert reward == 0.6
+    assert snapshot["pulls"] == 1
+    assert snapshot["total_reward"] == 0.6
+
+
 def test_run_extraction_updates_bandit_using_signal_rewards() -> None:
     pytest.importorskip("tenacity")
     from extraction.extractor import run_extraction

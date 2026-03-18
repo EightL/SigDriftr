@@ -77,3 +77,12 @@ class DriftResponse(BaseModel):
     topic: str
     days_back: int
     segments: list[DriftSegmentResponse]
+
+
+class HistorySegmentResponse(BaseModel):
+    segment: str
+    dates: list[str]
+    concern: list[float]
+    purchase_intent: list[float]
+    avoidance: list[float]
+    drift_magnitude: list[float]

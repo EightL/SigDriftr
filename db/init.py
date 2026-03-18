@@ -121,6 +121,12 @@ def get_conn() -> sqlite3.Connection:
         )
         conn.execute(
             """
+            CREATE INDEX IF NOT EXISTS idx_segment_profiles_topic_segment_computed_at
+            ON segment_profiles(topic, segment, computed_at)
+            """
+        )
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS baselines (
                 id                TEXT PRIMARY KEY,
                 topic             TEXT NOT NULL,

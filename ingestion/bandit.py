@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import math
 from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from typing import Sequence
 
 from config.domains import DOMAIN_SIGNAL_KEYS, DOMAINS, get_domain_config, topic_to_domain
@@ -67,9 +68,16 @@ def _utc_datetime(value: datetime | str | None) -> datetime:
     if value is None:
         return datetime.now(timezone.utc)
     if isinstance(value, str):
-        if not value:
+        normalized = value.strip()
+        if not normalized:
             return datetime.now(timezone.utc)
-        parsed = datetime.fromisoformat(value)
+        try:
+            parsed = datetime.fromisoformat(normalized)
+        except ValueError:
+            try:
+                parsed = parsedate_to_datetime(normalized)
+            except (TypeError, ValueError, IndexError) as exc:
+                raise ValueError(f"Unsupported datetime format: {value!r}") from exc
     else:
         parsed = value
     if parsed.tzinfo is None:

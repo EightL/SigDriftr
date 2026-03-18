@@ -41,8 +41,13 @@
     }
 
     .app {
+      width: 100%;
       max-width: 980px;
       margin: 0 auto;
+    }
+
+    .app.compare-active {
+      max-width: 1360px;
     }
 
     .header {
@@ -160,6 +165,18 @@
       cursor: default;
     }
 
+    .compare-toggle {
+      border-color: var(--border);
+      background: var(--panel);
+      color: var(--text);
+    }
+
+    .compare-toggle.is-active {
+      border-color: var(--cool);
+      background: var(--cool);
+      color: #f7f6f1;
+    }
+
     .status-line {
       margin-top: 12px;
       color: var(--muted);
@@ -223,11 +240,26 @@
 
     .alert-strong {
       color: var(--danger);
+      animation: pulse-danger 1.4s ease-in-out infinite;
     }
 
     .alert-mild,
     .frame-yes {
       color: var(--warning);
+    }
+
+    .alert-mild {
+      animation: pulse-warn 2s ease-in-out infinite;
+    }
+
+    @keyframes pulse-danger {
+      0%, 100% { color: var(--danger); }
+      50% { color: #ff8070; }
+    }
+
+    @keyframes pulse-warn {
+      0%, 100% { color: var(--warning); }
+      50% { color: #f0b84a; }
     }
 
     .chart-box {
@@ -240,10 +272,21 @@
       padding: 12px 0 8px 0;
     }
 
-    #radarChart {
+    .timeline-canvas-wrap {
+      padding: 16px 0 4px 0;
+      height: 340px;
+    }
+
+    .radar-chart-canvas {
       width: min(760px, 100%);
       height: auto;
       aspect-ratio: 1 / 1;
+      display: block;
+    }
+
+    #timelineChart {
+      width: 100%;
+      height: 100%;
       display: block;
     }
 
@@ -274,7 +317,7 @@
     }
 
     .brief-box {
-      border-left: 3px solid var(--accent);
+      border-left: 3px solid var(--brief-accent, var(--accent));
       padding: 14px 0 14px 18px;
     }
 
@@ -398,7 +441,131 @@
       font-weight: 600;
     }
 
+    .compare-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 24px;
+      align-items: start;
+    }
+
+    .compare-panel {
+      min-width: 0;
+      display: grid;
+      gap: 12px;
+      align-content: start;
+    }
+
+    .compare-panel .table-wrap {
+      overflow-x: auto;
+    }
+
+    .compare-panel .chart-box {
+      overflow: hidden;
+      padding: 18px 22px 14px;
+    }
+
+    .compare-panel .chart-canvas-wrap {
+      padding: 20px 12px 8px;
+    }
+
+    .compare-panel table {
+      table-layout: fixed;
+    }
+
+    .compare-panel th,
+    .compare-panel td {
+      padding: 8px 10px;
+      overflow-wrap: anywhere;
+    }
+
+    .compare-topic-label,
+    .compare-brief-title {
+      color: var(--muted);
+      font-size: 11px;
+      letter-spacing: 1.6px;
+      text-transform: uppercase;
+      font-family: "IBM Plex Mono", monospace;
+    }
+
+    .compare-brief-stack {
+      display: grid;
+      gap: 18px;
+    }
+
+    .ticker-wrap {
+      border: 1px solid var(--border);
+      background: var(--panel-alt);
+      overflow: hidden;
+      height: 36px;
+      display: flex;
+      align-items: center;
+    }
+
+    .ticker-inner {
+      display: flex;
+      width: max-content;
+      white-space: nowrap;
+      animation: ticker-scroll var(--ticker-duration, 30s) linear infinite;
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 12px;
+      will-change: transform;
+    }
+
+    .ticker-group {
+      display: flex;
+      flex: 0 0 auto;
+      gap: 48px;
+      padding-right: 48px;
+    }
+
+    .ticker-wrap:hover .ticker-inner {
+      animation-play-state: paused;
+    }
+
+    .ticker-item {
+      display: inline-flex;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .frame-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      display: inline-block;
+      flex: 0 0 auto;
+    }
+
+    .frame-dot.fear {
+      background: var(--danger);
+    }
+
+    .frame-dot.opportunity {
+      background: var(--accent);
+    }
+
+    .frame-dot.conflict {
+      background: var(--warning);
+    }
+
+    .frame-dot.neutral {
+      background: var(--muted);
+    }
+
+    @keyframes ticker-scroll {
+      from { transform: translateX(0); }
+      to { transform: translateX(calc(-1 * var(--ticker-shift, 0px))); }
+    }
+
+    .hidden {
+      display: none !important;
+    }
+
     @media (max-width: 720px) {
+      .compare-grid {
+        grid-template-columns: 1fr;
+      }
+
       body {
         padding: 16px;
       }
@@ -419,6 +586,10 @@
       .brand {
         font-size: 18px;
       }
+
+      .timeline-canvas-wrap {
+        height: 280px;
+      }
     }
   </style>
 </head>
@@ -434,14 +605,16 @@
       <div class="topic-row">
         <label class="topic-label" for="topicInput">TOPIC</label>
         <input id="topicInput" type="text" value="energie" spellcheck="false" autocomplete="off">
+        <input id="topicInput2" class="hidden" type="text" placeholder="second topic" spellcheck="false" autocomplete="off">
+        <button id="compareButton" class="compare-toggle" type="button" aria-pressed="false">Compare</button>
         <button id="analyzeButton" type="button">Analyze</button>
       </div>
       <div id="statusLine" class="status-line"></div>
     </section>
 
-    <section>
+    <section id="driftSection">
       <h2 class="section-title">Segment Drift - last 7 days</h2>
-      <div class="table-wrap">
+      <div id="driftSingleView" class="table-wrap">
         <table>
           <thead>
             <tr>
@@ -463,54 +636,108 @@
       </div>
     </section>
 
-    <section>
-      <h2 id="chartTitle" class="section-title">Signal Profile</h2>
+    <section id="timelineSection">
+      <h2 class="section-title">Drift Timeline</h2>
       <div class="chart-box">
+        <div class="chart-controls">
+          <label class="select-label" for="timelineSegmentSelect">HIGHLIGHT</label>
+          <select id="timelineSegmentSelect"></select>
+        </div>
+        <div class="timeline-canvas-wrap">
+          <canvas id="timelineChart"></canvas>
+        </div>
+      </div>
+    </section>
+
+    <section id="chartSection">
+      <h2 id="chartTitle" class="section-title">Signal Profile</h2>
+      <div id="chartSingleView" class="chart-box">
         <div class="chart-controls">
           <label class="select-label" for="segmentSelect">SEGMENT</label>
           <select id="segmentSelect"></select>
         </div>
         <div class="chart-canvas-wrap">
-          <canvas id="radarChart" width="520" height="520"></canvas>
+          <canvas id="radarChart" class="radar-chart-canvas" width="520" height="520"></canvas>
         </div>
         <div class="chart-legend"><span class="current">- CURRENT</span>   <span class="baseline">- - BASELINE</span></div>
       </div>
     </section>
 
-    <section>
+    <section id="signalsSection">
       <h2 id="signalsTitle" class="section-title">Recent Signals</h2>
       <div id="signalsLog" class="signals-log">No signals loaded.</div>
     </section>
 
-    <section>
+    <section id="briefSection">
       <h2 id="briefTitle" class="section-title">Research Brief</h2>
-      <div class="brief-box">
+      <div id="briefSingleView" class="brief-box">
         <div id="briefOutput" class="brief-content">
           <div class="brief-empty">&gt; no brief available for this topic</div>
         </div>
       </div>
     </section>
+
+    <section id="tickerSection">
+      <h2 class="section-title">Live Feed</h2>
+      <div id="tickerWrap" class="ticker-wrap">
+        <div id="tickerInner" class="ticker-inner"></div>
+      </div>
+    </section>
   </div>
 
   <script>
+    const appEl = document.querySelector(".app");
     const topicInput = document.getElementById("topicInput");
+    const topicInput2 = document.getElementById("topicInput2");
     const analyzeButton = document.getElementById("analyzeButton");
+    const compareButton = document.getElementById("compareButton");
     const statusLine = document.getElementById("statusLine");
     const healthEl = document.getElementById("health");
+    const driftSection = document.getElementById("driftSection");
+    const driftSingleView = document.getElementById("driftSingleView");
     const driftTableBody = document.getElementById("driftTableBody");
-    const segmentSelect = document.getElementById("segmentSelect");
+    const timelineSection = document.getElementById("timelineSection");
+    const timelineSegmentSelect = document.getElementById("timelineSegmentSelect");
+    const chartSection = document.getElementById("chartSection");
     const chartTitle = document.getElementById("chartTitle");
+    const chartSingleView = document.getElementById("chartSingleView");
+    const segmentSelect = document.getElementById("segmentSelect");
+    const signalsSection = document.getElementById("signalsSection");
     const signalsTitle = document.getElementById("signalsTitle");
     const signalsLog = document.getElementById("signalsLog");
+    const briefSection = document.getElementById("briefSection");
     const briefTitle = document.getElementById("briefTitle");
+    const briefSingleView = document.getElementById("briefSingleView");
     const briefOutput = document.getElementById("briefOutput");
+    const tickerSection = document.getElementById("tickerSection");
+    let tickerInner = document.getElementById("tickerInner");
 
     const DEFAULT_SEGMENTS = ["young_urban", "family", "senior", "b2b"];
     const SIGNAL_LABELS = ["CONCERN", "PURCHASE_INTENT", "AVOIDANCE"];
+    const COMPARE_SIGNAL_LABELS = ["CONCERN", ["PURCHASE", "INTENT"], "AVOIDANCE"];
+    const TIMELINE_COLORS = {
+      young_urban: "--accent",
+      family: "--danger",
+      senior: "--warning",
+      b2b: "--cool"
+    };
+
+    let compareMode = false;
     let driftData = null;
+    let historyData = [];
     let signalsData = [];
     let briefData = null;
+    let driftData1 = null;
+    let driftData2 = null;
+    let briefData1 = null;
+    let briefData2 = null;
+    let compareTopics = ["", ""];
     let radarChart = null;
+    let timelineChart = null;
+    let compareRadarCharts = [];
+    let compareDriftGrid = null;
+    let compareChartGrid = null;
+    let compareBriefStack = null;
 
     function escapeHtml(value) {
       return String(value)
@@ -539,6 +766,24 @@
 
     function updateStatus(message) {
       statusLine.textContent = message;
+    }
+
+    function cssVar(name, fallback) {
+      const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+      return value || fallback;
+    }
+
+    function withAlpha(color, alpha) {
+      const normalized = String(color || "").trim();
+      const hex = normalized.startsWith("#") ? normalized.slice(1) : normalized;
+      if (hex.length !== 6) {
+        return normalized;
+      }
+
+      const red = Number.parseInt(hex.slice(0, 2), 16);
+      const green = Number.parseInt(hex.slice(2, 4), 16);
+      const blue = Number.parseInt(hex.slice(4, 6), 16);
+      return `rgba(${red}, ${green}, ${blue}, ${alpha})`;
     }
 
     function colorClassForHealth(value) {
@@ -581,13 +826,23 @@
       }
     }
 
-    function renderDriftTable() {
-      if (!driftData || !Array.isArray(driftData.segments) || driftData.segments.length === 0) {
-        driftTableBody.innerHTML = '<tr><td class="empty" colspan="7">No drift data loaded.</td></tr>';
+    function getSegmentsFromData(data) {
+      return data && Array.isArray(data.segments) && data.segments.length
+        ? data.segments.map((row) => row.segment)
+        : DEFAULT_SEGMENTS;
+    }
+
+    function renderDriftTableInto(targetBody, data, emptyMessage = "No drift data loaded.") {
+      if (!targetBody) {
         return;
       }
 
-      driftTableBody.innerHTML = driftData.segments.map((row) => {
+      if (!data || !Array.isArray(data.segments) || data.segments.length === 0) {
+        targetBody.innerHTML = `<tr><td class="empty" colspan="7">${escapeHtml(emptyMessage)}</td></tr>`;
+        return;
+      }
+
+      targetBody.innerHTML = data.segments.map((row) => {
         if (!row.has_data) {
           return `
             <tr class="empty">
@@ -625,59 +880,264 @@
       }).join("");
     }
 
-    function populateSegmentSelect() {
-      const segments = driftData && Array.isArray(driftData.segments) && driftData.segments.length
-        ? driftData.segments.map((row) => row.segment)
-        : DEFAULT_SEGMENTS;
-      const previous = segmentSelect.value;
-      segmentSelect.innerHTML = segments
+    function renderDriftTable() {
+      renderDriftTableInto(driftTableBody, driftData);
+    }
+
+    function populateSegmentSelectFor(selectEl, data) {
+      if (!selectEl) {
+        return;
+      }
+
+      const segments = getSegmentsFromData(data);
+      const previous = selectEl.value;
+      selectEl.innerHTML = segments
         .map((segment) => `<option value="${escapeHtml(segment)}">${escapeHtml(segment)}</option>`)
         .join("");
 
       if (segments.includes(previous)) {
-        segmentSelect.value = previous;
+        selectEl.value = previous;
       } else {
-        segmentSelect.value = segments[0];
+        selectEl.value = segments[0];
       }
+    }
+
+    function populateSegmentSelect() {
+      populateSegmentSelectFor(segmentSelect, driftData);
+    }
+
+    function getSegmentEntryFromData(data, segment) {
+      if (!data || !Array.isArray(data.segments)) {
+        return null;
+      }
+      return data.segments.find((row) => row.segment === segment) || null;
     }
 
     function getSegmentEntry(segment) {
-      if (!driftData || !Array.isArray(driftData.segments)) {
-        return null;
-      }
-      return driftData.segments.find((row) => row.segment === segment) || null;
+      return getSegmentEntryFromData(driftData, segment);
     }
 
-    function ensureChart() {
-      if (radarChart) {
-        return radarChart;
+    function getHistorySegments() {
+      if (Array.isArray(historyData) && historyData.length > 0) {
+        return historyData.map((row) => row.segment);
+      }
+      return DEFAULT_SEGMENTS;
+    }
+
+    function populateTimelineSegmentSelect() {
+      const segments = getHistorySegments();
+      const previous = timelineSegmentSelect.value;
+      const options = ["all", ...segments];
+
+      timelineSegmentSelect.innerHTML = options.map((value) => {
+        const label = value === "all" ? "all_segments" : value;
+        return `<option value="${escapeHtml(value)}">${escapeHtml(label)}</option>`;
+      }).join("");
+
+      if (options.includes(previous)) {
+        timelineSegmentSelect.value = previous;
+      } else {
+        timelineSegmentSelect.value = "all";
+      }
+    }
+
+    function getHistoryEntry(segment) {
+      if (!Array.isArray(historyData)) {
+        return null;
+      }
+      return historyData.find((row) => row.segment === segment) || null;
+    }
+
+    function getTimelineLabels() {
+      const labels = new Set();
+      if (!Array.isArray(historyData)) {
+        return [];
       }
 
-      const canvas = document.getElementById("radarChart");
-      const maxDisplaySize = 760;
-      const horizontalPadding = 48;
-      const availableWidth = Math.max(
-        320,
-        Math.min(maxDisplaySize, canvas.parentElement.clientWidth - horizontalPadding)
+      historyData.forEach((entry) => {
+        if (!Array.isArray(entry.dates)) {
+          return;
+        }
+        entry.dates.forEach((date) => labels.add(date));
+      });
+
+      return Array.from(labels).sort();
+    }
+
+    function buildTimelineDatasets(labels) {
+      const selected = timelineSegmentSelect.value || "all";
+      const highlightAll = selected === "all";
+      const segmentDatasets = getHistorySegments().map((segment) => {
+        const entry = getHistoryEntry(segment);
+        const driftValues = Array.isArray(entry && entry.drift_magnitude) ? entry.drift_magnitude : [];
+        const lookup = new Map();
+
+        if (entry && Array.isArray(entry.dates)) {
+          entry.dates.forEach((date, index) => {
+            const value = driftValues[index];
+            lookup.set(date, value == null ? null : Number(value));
+          });
+        }
+
+        const color = cssVar(TIMELINE_COLORS[segment] || "--grid", "#666");
+        const highlighted = highlightAll || selected === segment;
+        return {
+          label: segment,
+          data: labels.map((date) => (lookup.has(date) ? lookup.get(date) : null)),
+          borderColor: highlighted ? color : withAlpha(color, 0.28),
+          backgroundColor: "transparent",
+          borderWidth: highlighted ? 2.4 : 1.2,
+          pointRadius: highlighted ? 2 : 0,
+          pointHoverRadius: highlighted ? 4 : 0,
+          spanGaps: false,
+          tension: 0
+        };
+      });
+
+      if (!labels.length) {
+        return segmentDatasets;
+      }
+
+      return [
+        ...segmentDatasets,
+        {
+          label: "mild threshold",
+          data: labels.map(() => 0.20),
+          borderColor: cssVar("--warning", "#b87a18"),
+          backgroundColor: "transparent",
+          borderWidth: 1,
+          borderDash: [6, 6],
+          pointRadius: 0,
+          pointHoverRadius: 0,
+          tension: 0
+        },
+        {
+          label: "strong threshold",
+          data: labels.map(() => 0.45),
+          borderColor: cssVar("--danger", "#b44535"),
+          backgroundColor: "transparent",
+          borderWidth: 1,
+          borderDash: [6, 6],
+          pointRadius: 0,
+          pointHoverRadius: 0,
+          tension: 0
+        }
+      ];
+    }
+
+    function renderTimelineChart() {
+      if (timelineChart) {
+        timelineChart.destroy();
+        timelineChart = null;
+      }
+
+      const canvas = document.getElementById("timelineChart");
+      const labels = getTimelineLabels();
+      const context = canvas.getContext("2d");
+
+      timelineChart = new Chart(context, {
+        type: "line",
+        data: {
+          labels,
+          datasets: buildTimelineDatasets(labels)
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          animation: false,
+          interaction: {
+            mode: "index",
+            intersect: false
+          },
+          plugins: {
+            legend: {
+              display: true,
+              labels: {
+                color: cssVar("--muted", "#6e746d"),
+                font: {
+                  family: "IBM Plex Mono",
+                  size: 11
+                }
+              }
+            },
+            tooltip: {
+              enabled: true,
+              titleFont: {
+                family: "IBM Plex Mono"
+              },
+              bodyFont: {
+                family: "IBM Plex Mono"
+              }
+            }
+          },
+          scales: {
+            x: {
+              ticks: {
+                color: cssVar("--muted", "#6e746d"),
+                font: {
+                  family: "IBM Plex Mono",
+                  size: 10
+                }
+              },
+              grid: {
+                color: withAlpha(cssVar("--grid", "#d9d4c7"), 0.65)
+              }
+            },
+            y: {
+              min: 0,
+              max: 1,
+              ticks: {
+                color: cssVar("--muted", "#6e746d"),
+                stepSize: 0.1,
+                font: {
+                  family: "IBM Plex Mono",
+                  size: 10
+                }
+              },
+              grid: {
+                color: withAlpha(cssVar("--grid", "#d9d4c7"), 0.8)
+              }
+            }
+          }
+        }
+      });
+    }
+
+    function sizeRadarCanvas(canvas, compact = false) {
+      const chartBox = canvas.closest(".chart-box");
+      const containerWidth = chartBox ? chartBox.clientWidth : (canvas.parentElement ? canvas.parentElement.clientWidth : 760);
+      const maxDisplaySize = compact ? 440 : 760;
+      const edgeReserve = compact ? 140 : 48;
+      const minimumSize = compact ? 260 : 240;
+      const availableWidth = Math.min(
+        maxDisplaySize,
+        Math.max(minimumSize, containerWidth - edgeReserve)
       );
       const displaySize = Math.round(availableWidth);
       const pixelRatio = window.devicePixelRatio || 1;
+
       canvas.width = Math.round(displaySize * pixelRatio);
       canvas.height = Math.round(displaySize * pixelRatio);
       canvas.style.width = `${displaySize}px`;
       canvas.style.height = `${displaySize}px`;
 
+      return pixelRatio;
+    }
+
+    function createRadarChart(canvas, currentColor, labels = SIGNAL_LABELS, compact = false) {
+      const pixelRatio = sizeRadarCanvas(canvas, compact);
       const context = canvas.getContext("2d");
       context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
-      radarChart = new Chart(context, {
+
+      return new Chart(context, {
         type: "radar",
         data: {
-          labels: SIGNAL_LABELS,
+          labels,
           datasets: [
             {
               label: "CURRENT",
               data: [0, 0, 0],
-              borderColor: "#1f7a4d",
+              borderColor: currentColor,
               backgroundColor: "transparent",
               pointRadius: 0,
               pointHoverRadius: 0,
@@ -699,6 +1159,16 @@
           responsive: false,
           animation: false,
           devicePixelRatio: 1,
+          layout: compact
+            ? {
+                padding: {
+                  top: 18,
+                  right: 36,
+                  bottom: 26,
+                  left: 36
+                }
+              }
+            : undefined,
           plugins: {
             legend: {
               display: false
@@ -730,9 +1200,10 @@
               },
               pointLabels: {
                 color: "#3d433e",
+                padding: compact ? 10 : 6,
                 font: {
                   family: "IBM Plex Mono",
-                  size: 12
+                  size: compact ? 10 : 12
                 }
               },
               ticks: {
@@ -740,7 +1211,7 @@
                 backdropColor: "transparent",
                 font: {
                   family: "IBM Plex Mono",
-                  size: 10
+                  size: compact ? 9 : 10
                 },
                 stepSize: 0.25
               }
@@ -748,16 +1219,11 @@
           }
         }
       });
-
-      return radarChart;
     }
 
-    function renderChart() {
-      const segment = segmentSelect.value || DEFAULT_SEGMENTS[0];
-      const entry = getSegmentEntry(segment);
+    function updateRadarChart(chart, entry) {
       const current = entry && entry.current ? entry.current : {};
       const baseline = entry && entry.baseline ? entry.baseline : {};
-      const chart = ensureChart();
 
       chart.data.datasets[0].data = [
         Number(current.concern_level || 0),
@@ -770,19 +1236,42 @@
         Number(baseline.avoidance_signals || 0)
       ];
       chart.update();
-
-      chartTitle.textContent = `SIGNAL PROFILE - ${segment} / current vs baseline`;
     }
 
-    window.addEventListener("resize", () => {
-      if (!radarChart) {
-        return;
+    function ensureChart() {
+      if (radarChart) {
+        return radarChart;
       }
 
-      radarChart.destroy();
-      radarChart = null;
-      renderChart();
-    });
+      const canvas = document.getElementById("radarChart");
+      radarChart = createRadarChart(canvas, cssVar("--accent", "#1f7a4d"));
+      return radarChart;
+    }
+
+    function destroySingleRadarChart() {
+      if (radarChart) {
+        radarChart.destroy();
+        radarChart = null;
+      }
+    }
+
+    function destroyCompareRadarCharts() {
+      compareRadarCharts.forEach((chart) => {
+        if (chart) {
+          chart.destroy();
+        }
+      });
+      compareRadarCharts = [];
+    }
+
+    function renderChart() {
+      const segment = segmentSelect.value || DEFAULT_SEGMENTS[0];
+      const entry = getSegmentEntry(segment);
+      const chart = ensureChart();
+
+      updateRadarChart(chart, entry);
+      chartTitle.textContent = `SIGNAL PROFILE - ${segment} / current vs baseline`;
+    }
 
     function findDominantSegment(row) {
       const segmentEntries = Object.entries(row)
@@ -822,38 +1311,38 @@
       `;
     }
 
-    function formatBrief() {
-      if (!briefData || typeof briefData !== "object") {
+    function formatBriefContent(data) {
+      if (!data || typeof data !== "object") {
         return '<div class="brief-empty">&gt; no brief available for this topic</div>';
       }
 
-      const headline = briefData.headline
-        ? `<h3 class="brief-headline">${escapeHtml(briefData.headline)}</h3>`
+      const headline = data.headline
+        ? `<h3 class="brief-headline">${escapeHtml(data.headline)}</h3>`
         : "";
-      const narrative = briefData.narrative
-        ? `<p class="brief-narrative">${escapeHtml(briefData.narrative)}</p>`
+      const narrative = data.narrative
+        ? `<p class="brief-narrative">${escapeHtml(data.narrative)}</p>`
         : "";
 
       const metaParts = [];
-      if (briefData.most_affected_segment) {
-        metaParts.push(renderBriefMeta("Most affected", briefData.most_affected_segment));
+      if (data.most_affected_segment) {
+        metaParts.push(renderBriefMeta("Most affected", data.most_affected_segment));
       }
-      if (briefData.drift_type) {
-        metaParts.push(renderBriefMeta("Drift type", briefData.drift_type));
+      if (data.drift_type) {
+        metaParts.push(renderBriefMeta("Drift type", data.drift_type));
       }
-      if (briefData.alert_level) {
-        metaParts.push(renderBriefMeta("Alert level", briefData.alert_level));
+      if (data.alert_level) {
+        metaParts.push(renderBriefMeta("Alert level", data.alert_level));
       }
-      if (briefData.generated_at) {
-        metaParts.push(renderBriefMeta("Generated", briefData.generated_at));
+      if (data.generated_at) {
+        metaParts.push(renderBriefMeta("Generated", data.generated_at));
       }
 
       const meta = metaParts.length
         ? `<div class="brief-meta">${metaParts.join("")}</div>`
         : "";
 
-      if (Array.isArray(briefData.hypotheses) && briefData.hypotheses.length > 0) {
-        const hypotheses = briefData.hypotheses.map((item, index) => `
+      if (Array.isArray(data.hypotheses) && data.hypotheses.length > 0) {
+        const hypotheses = data.hypotheses.map((item, index) => `
           <article class="brief-hypothesis">
             <div class="brief-hypothesis-title"><strong>[${index + 1}]</strong> ${escapeHtml(item.hypothesis || "")}</div>
             <div class="brief-hypothesis-meta">
@@ -877,24 +1366,267 @@
         return `${headline}${narrative}${meta}`;
       }
 
-      return `<pre>${escapeHtml(JSON.stringify(briefData, null, 2))}</pre>`;
+      return `<pre>${escapeHtml(JSON.stringify(data, null, 2))}</pre>`;
     }
 
     function renderBrief() {
       const topic = topicInput.value.trim();
       briefTitle.textContent = `RESEARCH BRIEF - ${topic || "topic"}`;
-      briefOutput.innerHTML = formatBrief();
+      briefOutput.innerHTML = formatBriefContent(briefData);
+    }
+
+    function normalizeFrame(frame) {
+      const normalized = String(frame || "").trim().toLowerCase();
+      if (["fear", "opportunity", "conflict", "neutral"].includes(normalized)) {
+        return normalized;
+      }
+      return "neutral";
+    }
+
+    function restartTicker(html) {
+      if (!tickerInner || !tickerInner.parentNode) {
+        return;
+      }
+
+      const nextTickerInner = tickerInner.cloneNode(false);
+      nextTickerInner.innerHTML = html;
+      tickerInner.replaceWith(nextTickerInner);
+      tickerInner = nextTickerInner;
+    }
+
+    function buildTickerGroupHtml(rows) {
+      return rows.map((row) => {
+        const frame = normalizeFrame(row.dominant_frame);
+        const [segmentKey] = findDominantSegment(row);
+        const segment = segmentKey.replace(/^seg_/, "") || "none";
+        const summary = `[${frame}] concern=${Number(row.concern_level || 0).toFixed(2)} intent=${Number(row.purchase_intent || 0).toFixed(2)} -> ${segment}`;
+        return `
+          <span class="ticker-item">
+            <span class="frame-dot ${frame}"></span>
+            <span>${escapeHtml(summary)}</span>
+          </span>
+        `;
+      }).join("");
+    }
+
+    function renderTicker() {
+      if (!tickerInner) {
+        return;
+      }
+
+      if (!Array.isArray(signalsData) || signalsData.length === 0) {
+        restartTicker('<span class="ticker-item empty"><span class="frame-dot neutral"></span>&gt; no live feed available</span>');
+        tickerInner.style.removeProperty("--ticker-shift");
+        tickerInner.style.removeProperty("--ticker-duration");
+        return;
+      }
+
+      const rows = signalsData.slice(0, 20);
+      const groupHtml = buildTickerGroupHtml(rows);
+      restartTicker(`
+        <div class="ticker-group">${groupHtml}</div>
+        <div class="ticker-group" aria-hidden="true">${groupHtml}</div>
+      `);
+
+      const firstGroup = tickerInner.querySelector(".ticker-group");
+      const wrapWidth = tickerInner.parentElement ? tickerInner.parentElement.clientWidth : 0;
+      const groupWidth = firstGroup ? firstGroup.offsetWidth : 0;
+
+      if (!groupWidth) {
+        tickerInner.style.removeProperty("--ticker-shift");
+        tickerInner.style.removeProperty("--ticker-duration");
+        return;
+      }
+
+      // Keep perceived speed stable while ensuring short feeds still loop continuously.
+      const durationSeconds = Math.max(18, Math.round(Math.max(groupWidth, wrapWidth) / 36));
+      tickerInner.style.setProperty("--ticker-shift", `${groupWidth}px`);
+      tickerInner.style.setProperty("--ticker-duration", `${durationSeconds}s`);
+    }
+
+    function getDisplayedCompareTopics() {
+      return [
+        compareTopics[0] || topicInput.value.trim() || "topic 1",
+        compareTopics[1] || topicInput2.value.trim() || "topic 2"
+      ];
+    }
+
+    function createCompareTopicLabel(topic) {
+      const label = document.createElement("div");
+      label.className = "compare-topic-label";
+      label.textContent = `TOPIC: ${topic}`;
+      return label;
+    }
+
+    function clearCompareLayout() {
+      destroyCompareRadarCharts();
+
+      if (compareDriftGrid) {
+        compareDriftGrid.remove();
+        compareDriftGrid = null;
+      }
+      if (compareChartGrid) {
+        compareChartGrid.remove();
+        compareChartGrid = null;
+      }
+      if (compareBriefStack) {
+        compareBriefStack.remove();
+        compareBriefStack = null;
+      }
+    }
+
+    function syncLayoutForMode() {
+      appEl.classList.toggle("compare-active", compareMode);
+      driftSingleView.classList.toggle("hidden", compareMode);
+      chartSingleView.classList.toggle("hidden", compareMode);
+      briefSingleView.classList.toggle("hidden", compareMode);
+      timelineSection.classList.toggle("hidden", compareMode);
+      signalsSection.classList.toggle("hidden", compareMode);
+      tickerSection.classList.toggle("hidden", compareMode);
+      topicInput2.classList.toggle("hidden", !compareMode);
+      topicInput2.disabled = !compareMode || analyzeButton.disabled;
+      compareButton.classList.toggle("is-active", compareMode);
+      compareButton.textContent = "Compare";
+      compareButton.setAttribute("aria-pressed", String(compareMode));
+    }
+
+    function renderCompareLayout() {
+      const topics = getDisplayedCompareTopics();
+      const comparePairs = [
+        { topic: topics[0], drift: driftData1, brief: briefData1, accent: "--accent" },
+        { topic: topics[1], drift: driftData2, brief: briefData2, accent: "--cool" }
+      ];
+
+      destroySingleRadarChart();
+      clearCompareLayout();
+      syncLayoutForMode();
+
+      compareDriftGrid = document.createElement("div");
+      compareDriftGrid.className = "compare-grid";
+
+      comparePairs.forEach((item) => {
+        const panel = document.createElement("div");
+        panel.className = "compare-panel";
+        panel.appendChild(createCompareTopicLabel(item.topic));
+
+        const tableWrap = driftSingleView.cloneNode(true);
+        tableWrap.removeAttribute("id");
+        tableWrap.classList.remove("hidden");
+        const body = tableWrap.querySelector("tbody");
+        if (body) {
+          body.removeAttribute("id");
+          renderDriftTableInto(body, item.drift, "Run comparison to populate drift data.");
+        }
+
+        panel.appendChild(tableWrap);
+        compareDriftGrid.appendChild(panel);
+      });
+
+      driftSection.appendChild(compareDriftGrid);
+
+      compareChartGrid = document.createElement("div");
+      compareChartGrid.className = "compare-grid";
+      const compareChartViews = [];
+
+      comparePairs.forEach((item, index) => {
+        const panel = document.createElement("div");
+        panel.className = "compare-panel";
+        panel.appendChild(createCompareTopicLabel(item.topic));
+
+        const chartBox = chartSingleView.cloneNode(true);
+        chartBox.removeAttribute("id");
+        chartBox.classList.remove("hidden");
+
+        const label = chartBox.querySelector("label[for]");
+        const select = chartBox.querySelector("select");
+        const canvas = chartBox.querySelector("canvas");
+        const legendCurrent = chartBox.querySelector(".current");
+        const selectId = `compareSegmentSelect${index + 1}`;
+        const canvasId = `compareRadarChart${index + 1}`;
+
+        if (label) {
+          label.setAttribute("for", selectId);
+        }
+        if (select) {
+          select.id = selectId;
+        }
+        if (canvas) {
+          canvas.id = canvasId;
+        }
+        if (legendCurrent) {
+          legendCurrent.style.color = cssVar(item.accent, index === 0 ? "#1f7a4d" : "#3b6fb6");
+        }
+
+        panel.appendChild(chartBox);
+        compareChartGrid.appendChild(panel);
+        compareChartViews.push({ canvas, select, drift: item.drift, accent: item.accent });
+      });
+
+      chartSection.appendChild(compareChartGrid);
+
+      compareChartViews.forEach((view, index) => {
+        if (!view.canvas || !view.select) {
+          return;
+        }
+
+        populateSegmentSelectFor(view.select, view.drift);
+        const renderColumnChart = () => {
+          const chart = compareRadarCharts[index] || createRadarChart(
+            view.canvas,
+            cssVar(view.accent, index === 0 ? "#1f7a4d" : "#3b6fb6"),
+            COMPARE_SIGNAL_LABELS,
+            true
+          );
+          compareRadarCharts[index] = chart;
+          const segment = view.select.value || DEFAULT_SEGMENTS[0];
+          updateRadarChart(chart, getSegmentEntryFromData(view.drift, segment));
+        };
+
+        view.select.addEventListener("change", renderColumnChart);
+        renderColumnChart();
+      });
+
+      compareBriefStack = document.createElement("div");
+      compareBriefStack.className = "compare-brief-stack";
+      compareBriefStack.innerHTML = comparePairs.map((item) => `
+        <div class="brief-box" style="--brief-accent: var(${item.accent});">
+          <div class="compare-brief-title">BRIEF - ${escapeHtml(item.topic)}</div>
+          <div class="brief-content">${formatBriefContent(item.brief)}</div>
+        </div>
+      `).join("");
+
+      briefTitle.textContent = "RESEARCH BRIEFS";
+      chartTitle.textContent = "SIGNAL PROFILE - compare";
+      briefSection.appendChild(compareBriefStack);
     }
 
     function renderAll() {
+      if (compareMode) {
+        renderCompareLayout();
+        return;
+      }
+
+      clearCompareLayout();
+      syncLayoutForMode();
       renderDriftTable();
+      populateTimelineSegmentSelect();
+      renderTimelineChart();
       populateSegmentSelect();
       renderChart();
       renderSignals();
       renderBrief();
+      renderTicker();
     }
 
-    async function runAnalysis() {
+    async function collectAndExtractTopic(topic, index, total) {
+      updateStatus(`> [${index}/${total}] collecting ${topic}...`);
+      await fetchJson(`/collect?topic=${encodeURIComponent(topic)}`, { method: "POST" });
+
+      updateStatus(`> [${index}/${total}] extracting ${topic}...`);
+      return fetchJson(`/extract?topic=${encodeURIComponent(topic)}`, { method: "POST" });
+    }
+
+    async function runSingleAnalysis() {
       const topic = topicInput.value.trim();
       if (!topic) {
         updateStatus("> enter a topic");
@@ -902,7 +1634,11 @@
         return;
       }
 
+      clearCompareLayout();
+      syncLayoutForMode();
       analyzeButton.disabled = true;
+      compareButton.disabled = true;
+      topicInput2.disabled = true;
 
       try {
         updateStatus("> collecting...");
@@ -912,37 +1648,140 @@
         const extractResult = await fetchJson(`/extract?topic=${encodeURIComponent(topic)}`, { method: "POST" });
 
         updateStatus("> computing drift...");
-        const [driftResult, signalsResult, briefResult] = await Promise.all([
-          fetchJson(`/drift/${encodeURIComponent(topic)}`),
+        const driftResult = await fetchJson(`/drift/${encodeURIComponent(topic)}`);
+        const [historyResult, signalsResult, briefResult] = await Promise.all([
+          fetchJson(`/history/${encodeURIComponent(topic)}?days_back=30`),
           fetchJson(`/signals?topic=${encodeURIComponent(topic)}`),
           fetchJson(`/brief/${encodeURIComponent(topic)}`)
         ]);
 
         driftData = driftResult;
+        historyData = historyResult;
         signalsData = signalsResult;
         briefData = briefResult;
         renderAll();
         updateStatus(`> done. ${extractResult.processed || signalsData.length || 0} signals processed.`);
       } catch (error) {
         driftData = null;
+        historyData = [];
         signalsData = [];
         briefData = null;
         renderAll();
         updateStatus(`> error: ${error.message}`);
       } finally {
         analyzeButton.disabled = false;
+        compareButton.disabled = false;
+        topicInput2.disabled = !compareMode;
       }
     }
 
+    async function runCompareAnalysis() {
+      const topic1 = topicInput.value.trim();
+      const topic2 = topicInput2.value.trim();
+
+      if (!topic1) {
+        updateStatus("> enter a topic");
+        topicInput.focus();
+        return;
+      }
+
+      if (!topic2) {
+        updateStatus("> enter a second topic");
+        topicInput2.focus();
+        return;
+      }
+
+      compareTopics = [topic1, topic2];
+      analyzeButton.disabled = true;
+      compareButton.disabled = true;
+      topicInput2.disabled = true;
+
+      try {
+        const extractResults = [];
+        extractResults[0] = await collectAndExtractTopic(topic1, 1, 2);
+        extractResults[1] = await collectAndExtractTopic(topic2, 2, 2);
+
+        updateStatus("> fetching drift + briefs...");
+        const [topicOneData, topicTwoData] = await Promise.all([
+          Promise.all([
+            fetchJson(`/drift/${encodeURIComponent(topic1)}`),
+            fetchJson(`/brief/${encodeURIComponent(topic1)}`)
+          ]),
+          Promise.all([
+            fetchJson(`/drift/${encodeURIComponent(topic2)}`),
+            fetchJson(`/brief/${encodeURIComponent(topic2)}`)
+          ])
+        ]);
+
+        driftData1 = topicOneData[0];
+        briefData1 = topicOneData[1];
+        driftData2 = topicTwoData[0];
+        briefData2 = topicTwoData[1];
+        renderAll();
+
+        const processed = extractResults.reduce((sum, result) => {
+          return sum + Number(result && result.processed ? result.processed : 0);
+        }, 0);
+        updateStatus(`> done. ${processed} signals processed across 2 topics.`);
+      } catch (error) {
+        driftData1 = null;
+        driftData2 = null;
+        briefData1 = null;
+        briefData2 = null;
+        renderAll();
+        updateStatus(`> error: ${error.message}`);
+      } finally {
+        analyzeButton.disabled = false;
+        compareButton.disabled = false;
+        topicInput2.disabled = !compareMode;
+      }
+    }
+
+    async function runAnalysis() {
+      if (compareMode) {
+        await runCompareAnalysis();
+        return;
+      }
+
+      await runSingleAnalysis();
+    }
+
     segmentSelect.addEventListener("change", () => {
-      renderChart();
+      if (!compareMode) {
+        renderChart();
+      }
+    });
+
+    timelineSegmentSelect.addEventListener("change", () => {
+      if (!compareMode) {
+        renderTimelineChart();
+      }
+    });
+
+    compareButton.addEventListener("click", () => {
+      compareMode = !compareMode;
+      renderAll();
     });
 
     analyzeButton.addEventListener("click", runAnalysis);
 
+    window.addEventListener("resize", () => {
+      if (compareMode) {
+        renderCompareLayout();
+        return;
+      }
+
+      if (!radarChart) {
+        return;
+      }
+
+      destroySingleRadarChart();
+      renderChart();
+    });
+
+    topicInput2.disabled = true;
     loadHealth();
-    populateSegmentSelect();
-    renderChart();
+    renderAll();
   </script>
 </body>
 </html>

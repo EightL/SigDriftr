@@ -12,6 +12,7 @@ from api.routes.brief import router as brief_router
 from api.routes.calibration import router as calibration_router
 from api.routes.collect import router as collect_router
 from api.routes.health import router as health_router
+from api.routes.history import router as history_router
 from api.routes.pipeline import router as pipeline_router
 from api.routes.signals import router as signals_router
 from api.scheduler import start_scheduler, stop_scheduler
@@ -37,6 +38,7 @@ app = FastAPI(title="SigDriftr", lifespan=lifespan)
 app.include_router(collect_router, prefix="")
 app.include_router(signals_router, prefix="")
 app.include_router(calibration_router, prefix="")
+app.include_router(history_router, prefix="")
 app.include_router(brief_router, prefix="")
 app.include_router(health_router, prefix="")
 app.include_router(pipeline_router, prefix="")

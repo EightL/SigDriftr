@@ -2,7 +2,10 @@ import json
 
 from fastapi import APIRouter
 
+from api.models import SignalRecord
 from db.init import get_conn
+from delta.engine import compute_drift
+from delta.mapper import compute_segment_profiles
 from extraction.extractor import run_extraction
 
 
@@ -12,12 +15,23 @@ router = APIRouter()
 @router.post("/extract")
 def extract(topic: str = "") -> dict[str, int | str]:
     processed = run_extraction(topic)
+    compute_segment_profiles(topic, learn_baseline=True)
     return {"processed": processed, "topic": topic}
 
 
-@router.get("/signals")
+@router.get("/signals", response_model=list[SignalRecord])
 def get_signals(topic: str = "") -> list[dict]:
     conn = get_conn()
+    drift = compute_drift(topic)
+    segment_confidence = {
+        entry["segment"]: {
+            "confidence": entry["confidence"],
+            "baseline_is_learned": entry["baseline_is_learned"],
+            "baseline_sample_count": entry["baseline_sample_count"],
+            "baseline_age_days": entry["baseline_age_days"],
+        }
+        for entry in drift
+    }
     rows = conn.execute(
         """
         SELECT a.topic, s.article_id, s.concern_level, s.purchase_intent,
@@ -45,6 +59,7 @@ def get_signals(topic: str = "") -> list[dict]:
             "seg_b2b": row[9],
             "raw_json": json.loads(row[10]) if row[10] else {},
             "extracted_at": row[11],
+            "segment_confidence": segment_confidence,
         }
         for row in rows
     ]

@@ -71,8 +71,9 @@ def seed_baselines(topics: list[str] | None = None) -> int:
                 """
                 INSERT INTO baselines
                 (id, topic, segment, concern_level, purchase_intent,
-                 avoidance_signals, dominant_frame, seeded, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)
+                 avoidance_signals, dominant_frame, seeded, sample_count,
+                 is_learned, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 1, 0, 0, ?)
                 """,
                 (
                     row_id,

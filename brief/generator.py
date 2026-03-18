@@ -5,8 +5,14 @@ import threading
 import urllib.request
 from datetime import datetime, timedelta, timezone
 
-from brief.models import ResearchBrief
-from brief.prompt import BRIEF_TEMPLATE, build_context_block
+from brief.models import BriefConfidenceContext, ResearchBrief
+from brief.prompt import (
+    BRIEF_TEMPLATE,
+    LOW_CONFIDENCE_WARNING,
+    build_context_block,
+    confidence_label,
+)
+from config.settings import MIN_BRIEF_CONFIDENCE
 from db.init import get_conn
 from delta.engine import compute_drift
 from pydantic import ValidationError
@@ -258,6 +264,42 @@ def _fallback_brief(
     )
 
 
+def _apply_confidence_language(
+    brief: ResearchBrief,
+    drift: list[dict],
+) -> ResearchBrief:
+    drift_by_segment = {entry["segment"]: entry for entry in drift}
+    segment_entry = drift_by_segment.get(brief.most_affected_segment)
+    if segment_entry is None and drift:
+        segment_entry = max(
+            drift,
+            key=lambda item: (
+                item.get("drift_magnitude", 0.0),
+                item.get("article_count", 0),
+            ),
+        )
+
+    narrative = brief.narrative.strip()
+    if segment_entry is not None:
+        qualifier = confidence_label(segment_entry.get("confidence", 0.0))
+        prefix = (
+            "Exploratory finding."
+            if qualifier == "exploratory finding"
+            else f"{qualifier.capitalize()} finding."
+        )
+        if qualifier not in narrative.lower():
+            narrative = f"{prefix} {narrative}".strip()
+
+    if drift and all(
+        entry.get("confidence", 0.0) < MIN_BRIEF_CONFIDENCE for entry in drift
+    ) and LOW_CONFIDENCE_WARNING not in narrative:
+        narrative = f"{LOW_CONFIDENCE_WARNING} {narrative}".strip()
+
+    if hasattr(brief, "model_copy"):
+        return brief.model_copy(update={"narrative": narrative})
+    return brief.copy(update={"narrative": narrative})
+
+
 def clear_brief_cache() -> None:
     with _cache_lock:
         _brief_cache.clear()
@@ -282,7 +324,18 @@ def generate_brief(topic: str) -> ResearchBrief:
     for entry in ranked_segments:
         top_articles.extend(_get_top_articles(real_topic, entry["segment"], limit=2))
 
-    context_block = build_context_block(drift, top_articles)
+    confidence_context = BriefConfidenceContext(
+        segment_confidence={
+            entry["segment"]: entry.get("confidence", 0.0) for entry in drift
+        },
+        baseline_is_learned={
+            entry["segment"]: entry.get("baseline_is_learned", False) for entry in drift
+        },
+        baseline_sample_count={
+            entry["segment"]: entry.get("baseline_sample_count", 0) for entry in drift
+        },
+    )
+    context_block = build_context_block(drift, top_articles, confidence_context)
     data: dict | None = None
     try:
         data = _call_ollama_json(
@@ -298,13 +351,19 @@ def generate_brief(topic: str) -> ResearchBrief:
         data["model_used"] = OLLAMA_MODEL
         data["topic"] = topic
         logger.debug("[brief] normalized payload topic=%s data=%s", topic, data)
-        return ResearchBrief(**data)
+        return _apply_confidence_language(ResearchBrief(**data), drift)
     except ValidationError as exc:
         logger.warning("[brief] Validation failed topic=%s error=%s data=%s", topic, exc, data)
-        return _fallback_brief(topic, generated_at, drift, exc)
+        return _apply_confidence_language(
+            _fallback_brief(topic, generated_at, drift, exc),
+            drift,
+        )
     except (RuntimeError, ValueError) as exc:
         logger.warning("[brief] Model output unusable topic=%s error=%s", topic, exc)
-        return _fallback_brief(topic, generated_at, drift, exc)
+        return _apply_confidence_language(
+            _fallback_brief(topic, generated_at, drift, exc),
+            drift,
+        )
 
 
 def generate_brief_cached(topic: str) -> ResearchBrief:

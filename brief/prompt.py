@@ -1,3 +1,7 @@
+from brief.models import BriefConfidenceContext
+from config.settings import HIGH_BRIEF_CONFIDENCE, MIN_BRIEF_CONFIDENCE
+
+
 SEGMENT_LABELS = {
     "young_urban": "young urban adults (18-35, city dwellers, digital-first)",
     "family": "family households (parents with children, suburban/rural)",
@@ -12,10 +16,30 @@ FRAME_MEANINGS = {
     "neutral": "articles are balanced or informational without strong framing",
 }
 
+LOW_CONFIDENCE_WARNING = (
+    "⚠️ Findings below are based on limited data and should be treated as early hypotheses."
+)
 
-def build_context_block(drift_results: list[dict], top_articles: list[dict]) -> str:
+
+def confidence_label(confidence: float) -> str:
+    if confidence >= HIGH_BRIEF_CONFIDENCE:
+        return "high confidence"
+    if confidence >= MIN_BRIEF_CONFIDENCE:
+        return "medium confidence"
+    return "exploratory finding"
+
+
+def build_context_block(
+    drift_results: list[dict],
+    top_articles: list[dict],
+    confidence_context: BriefConfidenceContext | None = None,
+) -> str:
     """Format drift data and grounding snippets into a compact prompt block."""
     lines = ["## Drift Evidence"]
+    if confidence_context is None:
+        confidence_context = BriefConfidenceContext()
+
+    all_low_confidence = True
     for drift in drift_results:
         segment = drift["segment"]
         label = SEGMENT_LABELS.get(segment, segment)
@@ -25,10 +49,29 @@ def build_context_block(drift_results: list[dict], top_articles: list[dict]) -> 
         frame_shift = drift.get("frame_shift", False)
         alert = drift.get("alert_level", "none")
         article_count = drift.get("article_count", 0)
+        confidence = confidence_context.segment_confidence.get(
+            segment, drift.get("confidence", 0.0)
+        )
+        baseline_is_learned = confidence_context.baseline_is_learned.get(
+            segment, drift.get("baseline_is_learned", False)
+        )
+        baseline_sample_count = confidence_context.baseline_sample_count.get(
+            segment, drift.get("baseline_sample_count", 0)
+        )
+        baseline_age_days = drift.get("baseline_age_days")
+        qualifier = confidence_label(confidence)
+        if confidence >= MIN_BRIEF_CONFIDENCE:
+            all_low_confidence = False
 
         lines.append(f"\n### Segment: {label}")
         lines.append(f"- Articles analysed: {article_count}")
         lines.append(f"- Alert level: {alert}")
+        lines.append(f"- Confidence: {confidence:.2f} ({qualifier})")
+        lines.append(f"- Baseline learned: {'yes' if baseline_is_learned else 'no'}")
+        lines.append(f"- Baseline sample count: {baseline_sample_count}")
+        lines.append(
+            f"- Baseline age (days): {baseline_age_days if baseline_age_days is not None else 'unknown'}"
+        )
         lines.append(f"- concern_level delta: {deltas.get('concern_level', 0.0):+.3f}")
         lines.append(
             f"- purchase_intent delta: {deltas.get('purchase_intent', 0.0):+.3f}"
@@ -48,6 +91,9 @@ def build_context_block(drift_results: list[dict], top_articles: list[dict]) -> 
                 f"{index}. [{article.get('segment', '?')}] {title} — {summary}"
             )
 
+    if drift_results and all_low_confidence:
+        lines.insert(1, LOW_CONFIDENCE_WARNING)
+
     return "\n".join(lines)
 
 
@@ -65,6 +111,8 @@ Return ONLY valid JSON matching this exact schema. No markdown, no prose outside
 Reason from the evidence in the drift summary and representative article snippets.
 Choose the most affected segment based on drift magnitude, alert level, and article grounding.
 Write exactly 3 hypotheses covering the most relevant segments.
+For each segment, qualify your language using the confidence level provided.
+Low-confidence segments must be framed as hypotheses, not conclusions.
 Use ONLY canonical segment keys in `most_affected_segment` and every hypothesis `segment` field:
 `young_urban`, `family`, `senior`, `b2b`.
 Never use human-readable labels such as "young urban adults", "seniors", or "business decision-makers".

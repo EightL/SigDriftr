@@ -11,9 +11,33 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 _local = threading.local()
 
 
+def run_migrations(conn: sqlite3.Connection) -> None:
+    """Apply idempotent schema migrations for existing databases."""
+    columns = {
+        row[1]
+        for row in conn.execute("PRAGMA table_info(baselines)").fetchall()
+    }
+
+    if "sample_count" not in columns:
+        conn.execute(
+            """
+            ALTER TABLE baselines
+            ADD COLUMN sample_count INTEGER NOT NULL DEFAULT 0
+            """
+        )
+    if "is_learned" not in columns:
+        conn.execute(
+            """
+            ALTER TABLE baselines
+            ADD COLUMN is_learned INTEGER NOT NULL DEFAULT 0
+            """
+        )
+
+
 def get_conn() -> sqlite3.Connection:
     """Return a per-thread SQLite connection, creating it on first use."""
     if not hasattr(_local, "conn"):
+        DB_PATH.parent.mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(
             str(DB_PATH),
             check_same_thread=False,
@@ -82,10 +106,13 @@ def get_conn() -> sqlite3.Connection:
                 avoidance_signals REAL,
                 dominant_frame    TEXT,
                 seeded            INTEGER DEFAULT 0,
+                sample_count      INTEGER NOT NULL DEFAULT 0,
+                is_learned        INTEGER NOT NULL DEFAULT 0,
                 updated_at        TEXT NOT NULL
             );
             """
         )
+        run_migrations(conn)
         conn.commit()
         _local.conn = conn
 

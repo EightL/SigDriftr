@@ -1,5 +1,6 @@
 from fastapi import APIRouter, HTTPException
 
+from api.models import CalibrationResponse, DriftResponse
 from delta.engine import compute_drift
 from delta.mapper import SEGMENTS, compute_segment_profiles
 
@@ -7,7 +8,7 @@ from delta.mapper import SEGMENTS, compute_segment_profiles
 router = APIRouter()
 
 
-@router.get("/calibration/{topic}/{segment}")
+@router.get("/calibration/{topic}/{segment}", response_model=CalibrationResponse)
 def get_calibration(topic: str, segment: str) -> dict:
     if segment not in SEGMENTS:
         raise HTTPException(
@@ -16,14 +17,18 @@ def get_calibration(topic: str, segment: str) -> dict:
         )
 
     real_topic = "" if topic == "_all" else topic
-    profiles = compute_segment_profiles(real_topic)
+    profiles = compute_segment_profiles(real_topic, learn_baseline=False)
     match = next((profile for profile in profiles if profile["segment"] == segment), None)
     if match is None:
         raise HTTPException(status_code=404, detail="No data for this topic/segment.")
-    return match
+    drift = compute_drift(real_topic)
+    drift_match = next((item for item in drift if item["segment"] == segment), None)
+    if drift_match is None:
+        return match
+    return {**match, **drift_match}
 
 
-@router.get("/drift/{topic}")
+@router.get("/drift/{topic}", response_model=DriftResponse)
 def get_drift(topic: str, days_back: int = 7) -> dict:
     real_topic = "" if topic == "_all" else topic
     drift = compute_drift(real_topic, days_back=days_back)

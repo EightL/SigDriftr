@@ -42,7 +42,11 @@ def _window_start(days_back: int = 7) -> str:
     return window_begin.isoformat()
 
 
-def compute_segment_profiles(topic: str, days_back: int = 7) -> list[dict]:
+def compute_segment_profiles(
+    topic: str,
+    days_back: int = 7,
+    learn_baseline: bool = False,
+) -> list[dict]:
     conn = get_conn()
     since = _window_start(days_back)
 
@@ -135,4 +139,17 @@ def compute_segment_profiles(topic: str, days_back: int = 7) -> list[dict]:
         )
 
     conn.commit()
+
+    if learn_baseline:
+        from delta.engine import update_baseline_from_profile
+
+        for profile in profiles:
+            update_baseline_from_profile(
+                topic,
+                profile["segment"],
+                profile,
+                article_count=profile["article_count"],
+                conn=conn,
+            )
+
     return profiles

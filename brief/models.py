@@ -18,6 +18,12 @@ class SurveyHypothesis(BaseModel):
     )
 
 
+class BriefConfidenceContext(BaseModel):
+    segment_confidence: dict[SegmentKey, float] = Field(default_factory=dict)
+    baseline_is_learned: dict[SegmentKey, bool] = Field(default_factory=dict)
+    baseline_sample_count: dict[SegmentKey, int] = Field(default_factory=dict)
+
+
 class ResearchBrief(BaseModel):
     topic: str
     headline: str = Field(

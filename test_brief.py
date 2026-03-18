@@ -19,7 +19,7 @@ from brief.generator import (
     generate_brief_cached,
 )
 from brief.models import ResearchBrief
-from brief.prompt import BRIEF_TEMPLATE
+from brief.prompt import BRIEF_TEMPLATE, LOW_CONFIDENCE_WARNING
 from delta.seeder import seed_baselines
 
 
@@ -492,6 +492,162 @@ def test_generate_brief_returns_fallback_when_ollama_json_is_invalid() -> None:
         assert len(brief.hypotheses) == 3
     finally:
         cleanup_temp_db(temp_dir)
+
+
+def test_generate_brief_prepends_low_confidence_warning() -> None:
+    temp_dir = setup_temp_db()
+    try:
+        response_data = {
+            "topic": "inflace",
+            "headline": "Early signal only",
+            "narrative": "Signals are still emerging across segments.",
+            "most_affected_segment": "young_urban",
+            "drift_type": "mixed",
+            "alert_level": "none",
+            "hypotheses": [
+                {
+                    "segment": "young_urban",
+                    "hypothesis": "Young urban adults may show early movement.",
+                    "signal_basis": "concern_level +0.02",
+                    "suggested_question": "Has recent coverage changed your behavior?",
+                },
+                {
+                    "segment": "family",
+                    "hypothesis": "Families may show early movement.",
+                    "signal_basis": "concern_level +0.01",
+                    "suggested_question": "Has recent coverage changed your household behavior?",
+                },
+                {
+                    "segment": "senior",
+                    "hypothesis": "Seniors may show early movement.",
+                    "signal_basis": "concern_level +0.01",
+                    "suggested_question": "Has recent coverage changed your spending habits?",
+                },
+            ],
+            "generated_at": "ignored",
+            "model_used": "ignored",
+        }
+
+        with patch(
+            "brief.generator.compute_drift",
+            return_value=[
+                {
+                    "segment": "young_urban",
+                    "drift_magnitude": 0.02,
+                    "article_count": 5,
+                    "confidence": 0.2,
+                    "baseline_is_learned": False,
+                    "baseline_sample_count": 0,
+                },
+                {
+                    "segment": "family",
+                    "drift_magnitude": 0.01,
+                    "article_count": 4,
+                    "confidence": 0.2,
+                    "baseline_is_learned": False,
+                    "baseline_sample_count": 0,
+                },
+                {
+                    "segment": "senior",
+                    "drift_magnitude": 0.01,
+                    "article_count": 3,
+                    "confidence": 0.2,
+                    "baseline_is_learned": False,
+                    "baseline_sample_count": 0,
+                },
+                {
+                    "segment": "b2b",
+                    "drift_magnitude": 0.0,
+                    "article_count": 2,
+                    "confidence": 0.2,
+                    "baseline_is_learned": False,
+                    "baseline_sample_count": 0,
+                },
+            ],
+        ), patch("brief.generator._call_ollama_json", return_value=response_data):
+            brief = generate_brief("inflace")
+    finally:
+        cleanup_temp_db(temp_dir)
+
+    assert LOW_CONFIDENCE_WARNING in brief.narrative
+
+
+def test_generate_brief_adds_high_confidence_qualifier() -> None:
+    temp_dir = setup_temp_db()
+    try:
+        response_data = {
+            "topic": "inflace",
+            "headline": "Seniors react strongly",
+            "narrative": "Coverage is driving a clear shift among seniors.",
+            "most_affected_segment": "senior",
+            "drift_type": "concern_spike",
+            "alert_level": "strong",
+            "hypotheses": [
+                {
+                    "segment": "senior",
+                    "hypothesis": "Seniors will cut discretionary spending.",
+                    "signal_basis": "concern_level +0.12",
+                    "suggested_question": "How likely are you to reduce spending?",
+                },
+                {
+                    "segment": "family",
+                    "hypothesis": "Families will become more cautious.",
+                    "signal_basis": "avoidance_signals +0.07",
+                    "suggested_question": "How likely are you to postpone purchases?",
+                },
+                {
+                    "segment": "young_urban",
+                    "hypothesis": "Young urban adults will react less strongly.",
+                    "signal_basis": "purchase_intent -0.02",
+                    "suggested_question": "How likely are you to change planned purchases?",
+                },
+            ],
+            "generated_at": "ignored",
+            "model_used": "ignored",
+        }
+
+        with patch(
+            "brief.generator.compute_drift",
+            return_value=[
+                {
+                    "segment": "senior",
+                    "drift_magnitude": 0.5,
+                    "article_count": 60,
+                    "confidence": 0.9,
+                    "baseline_is_learned": True,
+                    "baseline_sample_count": 20,
+                },
+                {
+                    "segment": "young_urban",
+                    "drift_magnitude": 0.1,
+                    "article_count": 55,
+                    "confidence": 0.9,
+                    "baseline_is_learned": True,
+                    "baseline_sample_count": 20,
+                },
+                {
+                    "segment": "family",
+                    "drift_magnitude": 0.08,
+                    "article_count": 52,
+                    "confidence": 0.9,
+                    "baseline_is_learned": True,
+                    "baseline_sample_count": 20,
+                },
+                {
+                    "segment": "b2b",
+                    "drift_magnitude": 0.05,
+                    "article_count": 51,
+                    "confidence": 0.9,
+                    "baseline_is_learned": True,
+                    "baseline_sample_count": 20,
+                },
+            ],
+        ), patch("brief.generator._call_ollama_json", return_value=response_data):
+            brief = generate_brief("inflace")
+    finally:
+        cleanup_temp_db(temp_dir)
+
+    assert "high confidence" in brief.narrative.lower()
 
 
 def test_generate_brief_cached_reuses_recent_result() -> None:

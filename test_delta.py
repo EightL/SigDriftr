@@ -131,7 +131,7 @@ def test_update_baseline_from_profile_blends_values() -> None:
     try:
         seed_baselines(["inflace"])
         profile = {
-            "article_count": 12,
+            "article_count": 30,
             "concern_level": 0.88,
             "purchase_intent": 0.11,
             "avoidance_signals": 0.33,
@@ -144,13 +144,14 @@ def test_update_baseline_from_profile_blends_values() -> None:
         row_id = hashlib.sha256("inflace:young_urban".encode()).hexdigest()
         row = conn.execute(
             """
-            SELECT concern_level, purchase_intent, avoidance_signals, dominant_frame, seeded
+            SELECT concern_level, purchase_intent, avoidance_signals, dominant_frame,
+                   seeded, sample_count, is_learned
             FROM baselines WHERE id = ?
             """,
             (row_id,),
         ).fetchone()
 
-        assert row == (0.48, 0.27, 0.21, "fear", 0)
+        assert row == (0.48, 0.27, 0.21, "fear", 0, 1, 1)
     finally:
         temp_dir.cleanup()
 

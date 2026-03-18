@@ -17,4 +17,6 @@ def test_ui_route_serves_demo_page() -> None:
     assert "Drift Timeline" in response.text
     assert 'id="compareButton"' in response.text
     assert 'id="topicInput2"' in response.text
+    assert "brief-status-banner" in response.text
+    assert "insufficient data" in response.text
     assert "compare-grid" in response.text

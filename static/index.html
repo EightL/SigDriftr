@@ -321,8 +321,57 @@
       padding: 14px 0 14px 18px;
     }
 
+    .brief-box[data-brief-status="insufficient_data"] {
+      background: #f1ede3;
+      border-left-color: var(--muted);
+    }
+
+    .brief-box[data-brief-status="warming"] {
+      background: #fff8ea;
+      border-left-color: var(--warning);
+    }
+
     .brief-content {
       color: #50554f;
+    }
+
+    .brief-status-banner {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      margin: 0 0 12px 0;
+      padding: 6px 10px;
+      border: 1px solid var(--border);
+      font-size: 11px;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      font-family: "IBM Plex Mono", monospace;
+    }
+
+    .brief-status-banner.insufficient_data {
+      color: var(--muted);
+      background: #e9e4d7;
+    }
+
+    .brief-status-banner.warming {
+      color: var(--warning);
+      background: #fbf1de;
+      border-color: #e2c58c;
+    }
+
+    .brief-status-banner.ready {
+      color: var(--accent);
+      background: var(--accent-soft);
+      border-color: #bad2c3;
+    }
+
+    .brief-status-note {
+      margin: 0 0 16px 0;
+      color: #5e625a;
+      font-size: 13px;
+      line-height: 1.6;
+      font-family: "Instrument Sans", sans-serif;
+      max-width: 75ch;
     }
 
     .brief-empty,
@@ -1311,10 +1360,67 @@
       `;
     }
 
+    function normalizeBriefStatus(status) {
+      const normalized = String(status || "").trim().toLowerCase();
+      if (["insufficient_data", "warming", "ready"].includes(normalized)) {
+        return normalized;
+      }
+      return "warming";
+    }
+
+    function briefStatusLabel(status) {
+      if (status === "insufficient_data") {
+        return "Status: insufficient data";
+      }
+      if (status === "ready") {
+        return "Status: ready";
+      }
+      return "Status: warming";
+    }
+
+    function briefStatusNote(status) {
+      if (status === "insufficient_data") {
+        return "Too little recent coverage; this is a data-availability notice, not a drift finding.";
+      }
+      if (status === "warming") {
+        return "Warming up: the baseline or coverage is still stabilizing, so interpret this brief cautiously.";
+      }
+      return "";
+    }
+
+    function applyBriefStatus(element, data) {
+      if (!element) {
+        return;
+      }
+
+      if (!data || typeof data !== "object") {
+        element.removeAttribute("data-brief-status");
+        return;
+      }
+
+      element.setAttribute("data-brief-status", normalizeBriefStatus(data.status));
+    }
+
+    function briefStatusAttribute(data) {
+      if (!data || typeof data !== "object") {
+        return "";
+      }
+      return `data-brief-status="${escapeHtml(normalizeBriefStatus(data.status))}"`;
+    }
+
     function formatBriefContent(data) {
       if (!data || typeof data !== "object") {
         return '<div class="brief-empty">&gt; no brief available for this topic</div>';
       }
+
+      const status = normalizeBriefStatus(data.status);
+      const statusBanner = `
+        <div class="brief-status-banner ${status}">${escapeHtml(briefStatusLabel(status))}</div>
+      `;
+      const statusNoteText = briefStatusNote(status);
+      const statusNote = statusNoteText
+        ? `<p class="brief-status-note">${escapeHtml(statusNoteText)}</p>`
+        : "";
 
       const headline = data.headline
         ? `<h3 class="brief-headline">${escapeHtml(data.headline)}</h3>`
@@ -1354,6 +1460,8 @@
         `).join("");
 
         return `
+          ${statusBanner}
+          ${statusNote}
           ${headline}
           ${narrative}
           ${meta}
@@ -1363,7 +1471,7 @@
       }
 
       if (headline || narrative || meta) {
-        return `${headline}${narrative}${meta}`;
+        return `${statusBanner}${statusNote}${headline}${narrative}${meta}`;
       }
 
       return `<pre>${escapeHtml(JSON.stringify(data, null, 2))}</pre>`;
@@ -1372,6 +1480,7 @@
     function renderBrief() {
       const topic = topicInput.value.trim();
       briefTitle.textContent = `RESEARCH BRIEF - ${topic || "topic"}`;
+      applyBriefStatus(briefSingleView, briefData);
       briefOutput.innerHTML = formatBriefContent(briefData);
     }
 
@@ -1589,7 +1698,7 @@
       compareBriefStack = document.createElement("div");
       compareBriefStack.className = "compare-brief-stack";
       compareBriefStack.innerHTML = comparePairs.map((item) => `
-        <div class="brief-box" style="--brief-accent: var(${item.accent});">
+        <div class="brief-box" ${briefStatusAttribute(item.brief)} style="--brief-accent: var(${item.accent});">
           <div class="compare-brief-title">BRIEF - ${escapeHtml(item.topic)}</div>
           <div class="brief-content">${formatBriefContent(item.brief)}</div>
         </div>

@@ -45,6 +45,7 @@ def cleanup_temp_db(temp_dir: tempfile.TemporaryDirectory) -> None:
 def sample_brief(topic: str = "inflace", *, headline: str | None = None) -> ResearchBrief:
     return ResearchBrief(
         topic=topic,
+        status="ready",
         headline=headline or "Seniors show rising concern in inflation coverage",
         narrative="Inflation stories are amplifying concern among seniors, while other audiences remain less affected.",
         most_affected_segment="senior",
@@ -201,6 +202,7 @@ def test_generate_brief_returns_valid_structured_brief() -> None:
 
         assert isinstance(brief, ResearchBrief)
         assert brief.topic == "inflace"
+        assert brief.status == "warming"
         assert brief.most_affected_segment == "senior"
         assert brief.drift_type == "concern_spike"
         assert brief.alert_level == "strong"
@@ -255,6 +257,21 @@ def test_build_context_block_omits_irrelevant_domain_signals() -> None:
     assert "purchase_intent delta" not in context
     assert "concern_level delta: +0.150" in context
     assert "avoidance_signals delta: +0.200" in context
+
+
+def test_generate_brief_returns_insufficient_data_without_calling_llm() -> None:
+    temp_dir = setup_temp_db()
+    try:
+        with patch("brief.generator._call_ollama_json") as mock_call:
+            brief = generate_brief("new-topic")
+    finally:
+        cleanup_temp_db(temp_dir)
+
+    assert brief.status == "insufficient_data"
+    assert brief.alert_level == "none"
+    assert brief.drift_type == "stable"
+    assert brief.confidence_context is not None
+    mock_call.assert_not_called()
 
 
 def test_call_ollama_json_uses_larger_output_budget() -> None:
@@ -407,6 +424,7 @@ def test_research_brief_rejects_noncanonical_segment_keys() -> None:
     with pytest.raises(ValidationError):
         ResearchBrief(
             topic="inflace",
+            status="warming",
             headline="Invalid segment example",
             narrative="This should fail validation.",
             most_affected_segment="business_decision-makers",
@@ -491,6 +509,7 @@ def test_generate_brief_returns_fallback_when_validation_still_fails() -> None:
             brief = generate_brief("inflace")
 
         assert "degraded" not in brief.headline.lower()
+        assert brief.status == "warming"
         assert brief.headline.startswith(("Young Urban", "Family", "Senior", "B2B"))
         assert brief.alert_level in ("none", "mild", "strong")
         assert brief.most_affected_segment in ("young_urban", "family", "senior", "b2b")
@@ -525,6 +544,7 @@ def test_generate_brief_returns_fallback_when_ollama_json_is_invalid() -> None:
             brief = generate_brief("inflace")
 
         assert "degraded" not in brief.headline.lower()
+        assert brief.status == "warming"
         assert brief.headline.startswith(("Young Urban", "Family", "Senior", "B2B"))
         assert brief.topic == "inflace"
         assert brief.alert_level in ("none", "mild", "strong")
@@ -608,6 +628,7 @@ def test_generate_brief_prepends_low_confidence_warning() -> None:
     finally:
         cleanup_temp_db(temp_dir)
 
+    assert brief.status == "warming"
     assert LOW_CONFIDENCE_WARNING in brief.narrative
 
 
@@ -686,6 +707,7 @@ def test_generate_brief_adds_high_confidence_qualifier() -> None:
     finally:
         cleanup_temp_db(temp_dir)
 
+    assert brief.status == "ready"
     assert "high confidence" in brief.narrative.lower()
 
 

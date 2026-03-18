@@ -26,6 +26,9 @@ class BriefConfidenceContext(BaseModel):
 
 class ResearchBrief(BaseModel):
     topic: str
+    status: Literal["insufficient_data", "warming", "ready"] = Field(
+        description="Whether the brief is a data notice, an exploratory result, or ready for normal use."
+    )
     headline: str = Field(
         description="8-12 word summary of the dominant behavioral shift"
     )

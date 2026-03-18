@@ -9,5 +9,5 @@ router = APIRouter()
 
 @router.get("/brief/{topic}", response_model=ResearchBrief)
 def get_brief(topic: str) -> ResearchBrief:
-    """Generate a Lakmoos-style research brief for a topic."""
+    """Generate a research brief with status and confidence metadata."""
     return generate_brief_cached(topic)

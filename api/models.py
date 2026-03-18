@@ -1,4 +1,9 @@
+from typing import Literal
+
 from pydantic import BaseModel, Field
+
+
+SegmentStatus = Literal["no_data", "warming", "ready"]
 
 
 class SegmentConfidence(BaseModel):
@@ -48,6 +53,7 @@ class CalibrationResponse(BaseModel):
     baseline: dict[str, float] | None = None
     current: dict[str, float] | None = None
     has_data: bool | None = None
+    status: SegmentStatus | None = None
     domain: str | None = "generic"
     relevant_fields: list[str] | None = None
 
@@ -69,6 +75,7 @@ class DriftSegmentResponse(BaseModel):
     baseline_is_learned: bool | None = None
     baseline_sample_count: int | None = None
     baseline_age_days: int | None = None
+    status: SegmentStatus | None = None
     domain: str | None = "generic"
     relevant_fields: list[str] | None = None
 

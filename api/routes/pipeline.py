@@ -15,6 +15,7 @@ async def run_pipeline(topic: str) -> dict[str, object]:
     return {
         **collect_result,
         "brief_topic": brief.topic,
+        "brief_status": brief.status,
         "brief_alert_level": brief.alert_level,
         "brief_confidence": (
             brief.confidence_context.segment_confidence

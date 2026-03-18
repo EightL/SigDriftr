@@ -65,6 +65,7 @@ _SEGMENT_DISPLAY_NAMES = {
     "senior": "Senior",
     "b2b": "B2B",
 }
+_INSUFFICIENT_DATA_SEGMENTS = ("young_urban", "family", "senior")
 
 
 def _copy_brief(brief: ResearchBrief, **updates: object) -> ResearchBrief:
@@ -203,8 +204,79 @@ def _canonicalize_drift_type(value: str | None) -> str:
     return normalized
 
 
+def _topic_label(topic: str) -> str:
+    if topic == "_all":
+        return "all monitored topics"
+    if topic:
+        return topic
+    return "this topic"
+
+
+def _brief_status_from_drift(drift: list[dict]) -> str:
+    total_articles = sum(int(entry.get("article_count", 0) or 0) for entry in drift)
+    if not drift or total_articles == 0:
+        return "insufficient_data"
+
+    ready_segments = [
+        entry
+        for entry in drift
+        if entry.get("status") == "ready"
+        or (
+            bool(entry.get("has_data", entry.get("article_count", 0) > 0))
+            and bool(entry.get("baseline_is_learned", False))
+            and entry.get("confidence", 0.0) >= MIN_BRIEF_CONFIDENCE
+        )
+    ]
+    if ready_segments:
+        return "ready"
+    return "warming"
+
+
+def _insufficient_data_brief(topic: str, generated_at: str) -> ResearchBrief:
+    topic_label = _topic_label(topic)
+    return ResearchBrief(
+        topic=topic,
+        status="insufficient_data",
+        headline=f"Insufficient recent coverage for {topic_label}",
+        narrative=(
+            f"No recent articles were collected for {topic_label}. "
+            "This is a data-availability notice rather than a drift finding; "
+            "rerun the pipeline later or widen the monitoring window."
+        ),
+        most_affected_segment="young_urban",
+        drift_type="stable",
+        alert_level="none",
+        hypotheses=[
+            {
+                "segment": _INSUFFICIENT_DATA_SEGMENTS[0],
+                "hypothesis": "Behavior change may become measurable once recent coverage volume increases.",
+                "signal_basis": "Insufficient recent evidence to estimate segment drift yet.",
+                "suggested_question": "Recent coverage on this topic has been noticeable to me.",
+            },
+            {
+                "segment": _INSUFFICIENT_DATA_SEGMENTS[1],
+                "hypothesis": "Audience reactions may diverge once the topic appears more consistently in coverage.",
+                "signal_basis": "Additional article volume is needed before segment comparisons are reliable.",
+                "suggested_question": "I have seen enough recent coverage on this topic to form an opinion.",
+            },
+            {
+                "segment": _INSUFFICIENT_DATA_SEGMENTS[2],
+                "hypothesis": "Awareness and concern may remain flat until the topic reaches sustained visibility.",
+                "signal_basis": "Current window contains too little evidence for a grounded behavioral summary.",
+                "suggested_question": "If coverage on this topic increases, it would affect my expectations or behavior.",
+            },
+        ],
+        generated_at=generated_at,
+        model_used=OLLAMA_MODEL,
+    )
+
+
 def _fallback_brief(
-    topic: str, generated_at: str, drift: list[dict], error: Exception
+    topic: str,
+    generated_at: str,
+    drift: list[dict],
+    error: Exception,
+    status: str,
 ) -> ResearchBrief:
     ranked_segments = sorted(
         drift,
@@ -261,6 +333,7 @@ def _fallback_brief(
     hint = str(error).splitlines()[0][:120]
     return ResearchBrief(
         topic=topic,
+        status=status,
         headline=f"{display_name} Segment Shows {signal_phrase}",
         narrative=(
             f"Computed drift results show the strongest movement in the {display_name.lower()} segment, "
@@ -339,6 +412,24 @@ def generate_brief(topic: str) -> ResearchBrief:
     real_topic = "" if topic == "_all" else topic
     drift = compute_drift(real_topic)
     generated_at = datetime.now(timezone.utc).isoformat()
+    brief_status = _brief_status_from_drift(drift)
+
+    confidence_context = BriefConfidenceContext(
+        segment_confidence={
+            entry["segment"]: entry.get("confidence", 0.0) for entry in drift
+        },
+        baseline_is_learned={
+            entry["segment"]: entry.get("baseline_is_learned", False) for entry in drift
+        },
+        baseline_sample_count={
+            entry["segment"]: entry.get("baseline_sample_count", 0) for entry in drift
+        },
+    )
+    if brief_status == "insufficient_data":
+        return _copy_brief(
+            _insufficient_data_brief(topic, generated_at),
+            confidence_context=confidence_context,
+        )
 
     ranked_segments = sorted(
         drift,
@@ -358,17 +449,6 @@ def generate_brief(topic: str) -> ResearchBrief:
     for article in top_articles:
         article["entities"] = entities_by_article.get(article["article_id"], [])
 
-    confidence_context = BriefConfidenceContext(
-        segment_confidence={
-            entry["segment"]: entry.get("confidence", 0.0) for entry in drift
-        },
-        baseline_is_learned={
-            entry["segment"]: entry.get("baseline_is_learned", False) for entry in drift
-        },
-        baseline_sample_count={
-            entry["segment"]: entry.get("baseline_sample_count", 0) for entry in drift
-        },
-    )
     context_block = build_context_block(drift, top_articles, confidence_context)
     domain = drift[0].get("domain", "generic") if drift else "generic"
     relevant_fields = drift[0].get("relevant_fields", []) if drift else []
@@ -388,20 +468,21 @@ def generate_brief(topic: str) -> ResearchBrief:
         data["generated_at"] = generated_at
         data["model_used"] = OLLAMA_MODEL
         data["topic"] = topic
+        data["status"] = brief_status
         logger.debug("[brief] normalized payload topic=%s data=%s", topic, data)
         brief = _apply_confidence_language(ResearchBrief(**data), drift)
         return _copy_brief(brief, confidence_context=confidence_context)
     except ValidationError as exc:
         logger.warning("[brief] Validation failed topic=%s error=%s data=%s", topic, exc, data)
         brief = _apply_confidence_language(
-            _fallback_brief(topic, generated_at, drift, exc),
+            _fallback_brief(topic, generated_at, drift, exc, brief_status),
             drift,
         )
         return _copy_brief(brief, confidence_context=confidence_context)
     except (RuntimeError, ValueError) as exc:
         logger.warning("[brief] Model output unusable topic=%s error=%s", topic, exc)
         brief = _apply_confidence_language(
-            _fallback_brief(topic, generated_at, drift, exc),
+            _fallback_brief(topic, generated_at, drift, exc, brief_status),
             drift,
         )
         return _copy_brief(brief, confidence_context=confidence_context)

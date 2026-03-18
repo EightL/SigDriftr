@@ -7,6 +7,7 @@ from config.settings import (
     CONFIDENCE_ARTICLE_DENOMINATOR,
     CONFIDENCE_BASELINE_WEIGHT,
     CONFIDENCE_COVERAGE_WEIGHT,
+    MIN_BRIEF_CONFIDENCE,
     MIN_ARTICLES_FOR_BASELINE,
 )
 from db.init import get_conn
@@ -52,6 +53,18 @@ def _alert_level(drift_magnitude: float, article_count: int) -> str:
     if drift_magnitude >= ALERT_THRESHOLDS["mild"]:
         return "mild"
     return "none"
+
+
+def _segment_status(
+    article_count: int,
+    is_learned: bool,
+    confidence: float,
+) -> str:
+    if article_count == 0:
+        return "no_data"
+    if is_learned and confidence >= MIN_BRIEF_CONFIDENCE:
+        return "ready"
+    return "warming"
 
 
 def _clamp(value: float, minimum: float = 0.0, maximum: float = 1.0) -> float:
@@ -110,6 +123,11 @@ def compute_drift(topic: str, days_back: int = 7) -> list[dict]:
             sample_count,
             is_learned,
         )
+        status = _segment_status(
+            profile["article_count"],
+            is_learned,
+            confidence,
+        )
 
         if not has_data:
             results.append(
@@ -134,6 +152,7 @@ def compute_drift(topic: str, days_back: int = 7) -> list[dict]:
                     "baseline_is_learned": is_learned,
                     "baseline_sample_count": sample_count,
                     "baseline_age_days": baseline_age_days,
+                    "status": status,
                     "domain": domain,
                     "relevant_fields": relevant_fields,
                 }
@@ -158,6 +177,7 @@ def compute_drift(topic: str, days_back: int = 7) -> list[dict]:
                     "baseline_is_learned": is_learned,
                     "baseline_sample_count": sample_count,
                     "baseline_age_days": baseline_age_days,
+                    "status": status,
                     "domain": domain,
                     "relevant_fields": relevant_fields,
                 }
@@ -195,6 +215,7 @@ def compute_drift(topic: str, days_back: int = 7) -> list[dict]:
                 "baseline_is_learned": is_learned,
                 "baseline_sample_count": sample_count,
                 "baseline_age_days": baseline_age_days,
+                "status": status,
                 "domain": domain,
                 "relevant_fields": relevant_fields,
             }

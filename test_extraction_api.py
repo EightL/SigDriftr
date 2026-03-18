@@ -190,6 +190,7 @@ def test_pipeline_route_returns_brief_summary() -> None:
             "api.routes.pipeline.generate_brief_cached",
             return_value=ResearchBrief(
                 topic="inflace",
+                status="warming",
                 headline="Inflation concern rises among families",
                 narrative="Structured summary.",
                 most_affected_segment="family",
@@ -235,6 +236,7 @@ def test_pipeline_route_returns_brief_summary() -> None:
             "rewards_recorded": 2,
             "topic": "inflace",
             "brief_topic": "inflace",
+            "brief_status": "warming",
             "brief_alert_level": "mild",
             "brief_confidence": {
                 "young_urban": 0.4,

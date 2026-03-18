@@ -122,7 +122,9 @@ def test_compute_drift_uses_weighted_segment_profiles() -> None:
             "avoidance_signals",
         ]
         assert drift_by_segment["family"]["frame_shift"] is True
+        assert drift_by_segment["young_urban"]["status"] == "warming"
         assert drift_by_segment["senior"]["alert_level"] == "no_data"
+        assert drift_by_segment["senior"]["status"] == "no_data"
         assert drift_by_segment["senior"]["deltas"] == {
             "concern_level": 0.0,
             "purchase_intent": 0.0,
@@ -310,6 +312,51 @@ def test_empty_window_returns_no_data_alerts() -> None:
         assert all(entry["alert_level"] == "no_data" for entry in drift)
         assert all(entry["drift_magnitude"] == 0.0 for entry in drift)
         assert all(entry["has_data"] is False for entry in drift)
+        assert all(entry["status"] == "no_data" for entry in drift)
+    finally:
+        temp_dir.cleanup()
+
+
+def test_compute_drift_reports_segment_status_levels() -> None:
+    temp_dir = setup_temp_db()
+    try:
+        seed_baselines(["inflace"])
+
+        for index in range(60):
+            insert_article_with_signal(
+                article_id=f"ready-{index}",
+                topic="inflace",
+                concern=0.7,
+                purchase=0.2,
+                avoidance=0.3,
+                frame="fear",
+                seg_young_urban=1.0,
+                seg_family=0.0,
+                seg_senior=0.0,
+                seg_b2b=0.0,
+            )
+
+        for index in range(5):
+            insert_article_with_signal(
+                article_id=f"warming-{index}",
+                topic="inflace",
+                concern=0.4,
+                purchase=0.1,
+                avoidance=0.2,
+                frame="neutral",
+                seg_young_urban=0.0,
+                seg_family=1.0,
+                seg_senior=0.0,
+                seg_b2b=0.0,
+            )
+
+        compute_segment_profiles("inflace", learn_baseline=True)
+        drift = compute_drift("inflace")
+        drift_by_segment = {entry["segment"]: entry for entry in drift}
+
+        assert drift_by_segment["young_urban"]["status"] == "ready"
+        assert drift_by_segment["family"]["status"] == "warming"
+        assert drift_by_segment["senior"]["status"] == "no_data"
     finally:
         temp_dir.cleanup()
 

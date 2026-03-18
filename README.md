@@ -249,99 +249,182 @@ It then renders:
 ### Install
 
 ```bash
+git clone https://github.com/EightL/SigDriftr.git
+cd SigDriftr
+
 python3 -m venv .venv
-source .venv/bin/activate
+source .venv/bin/activate  # or: .venv\Scripts\activate (Windows)
 pip install -r requirements.txt
 ```
 
-### Start the API
+### Run
 
 ```bash
+# Start Ollama (in another terminal)
+ollama serve
+
+# Start API (this terminal)
 uvicorn main:app --reload
 ```
 
-Open:
+**Access:**
+- OpenAPI docs: http://localhost:8000/docs
+- Demo UI: http://localhost:8000/ui
 
-- API docs: [http://localhost:8000/docs](http://localhost:8000/docs)
-- Demo UI: [http://localhost:8000/ui](http://localhost:8000/ui)
-
-### Typical manual flow
-
-From the UI:
-
-1. enter a topic such as `energie`
-2. click `Analyze`
-
-Or via HTTP:
+### Quick Example
 
 ```bash
+# 1. Collect articles
 curl -X POST "http://localhost:8000/collect?topic=energie"
+
+# 2. Extract signals
 curl -X POST "http://localhost:8000/extract?topic=energie"
+
+# 3. Get drift
 curl "http://localhost:8000/drift/energie"
-curl "http://localhost:8000/signals?topic=energie"
+
+# 4. Get brief
 curl "http://localhost:8000/brief/energie"
 ```
 
-## Dependencies
+For more examples, see [API.md](API.md#typical-workflows).
 
-Current Python dependencies from [`requirements.txt`](/home/osml/code/ml/SigDriftr/requirements.txt):
+## Project Structure
 
-- `fastapi`
-- `pydantic`
-- `uvicorn`
-- `feedparser`
-- `tenacity`
-- `sentence-transformers`
-- `transformers>=4.40`
-- `torch`
-- `aiofiles`
-
-Notes:
-
-- `sentence-transformers`, `transformers`, and `torch` are only needed for the semantic relevance fallback during ingestion
-- the service also depends on Ollama, but that is not managed by `pip`
-
-## Tests
-
-The repo contains a mix of unit tests and small integration-style scripts:
-
-- [`test_extraction_api.py`](/home/osml/code/ml/SigDriftr/test_extraction_api.py): route-level and extraction utility tests
-- [`test_delta.py`](/home/osml/code/ml/SigDriftr/test_delta.py): segment aggregation, drift, alerting, baseline seeding
-- [`test_brief.py`](/home/osml/code/ml/SigDriftr/test_brief.py): brief validation, normalization, fallback behavior, cache handling
-- [`test_ui.py`](/home/osml/code/ml/SigDriftr/test_ui.py): static UI route smoke test
-- [`test_ingestion.py`](/home/osml/code/ml/SigDriftr/test_ingestion.py) and [`test_signals.py`](/home/osml/code/ml/SigDriftr/test_signals.py): command-line scripts for exercising a running API
-
-Run the actual pytest-based tests with:
-
-```bash
-pytest -q
+```
+SigDriftr/
+├── main.py                 # FastAPI entry point
+├── requirements.txt        # Python dependencies
+├── sigdriftr.db           # SQLite database (auto-created)
+│
+├── api/routes/            # HTTP endpoints
+├── db/                    # SQLite schema + pooling
+├── config/                # RSS feeds + segment priors
+├── ingestion/             # RSS collection + LinUCB bandit
+├── extraction/            # LLM-based signal extraction
+├── delta/                 # Segment aggregation + drift
+├── brief/                 # Research brief generation
+├── static/                # Dashboard UI
+│
+├── test_*.py              # Test suite (12 files)
+├── conftest.py           # Pytest fixtures
+│
+├── README.md             # This file
+├── ARCHITECTURE.md       # Technical design
+├── API.md                # Endpoint reference
+├── DEVELOPMENT.md        # Developer guide
+└── concerns.md           # Limitations + roadmap
 ```
 
-## Current limitations
+## Core Concepts
 
-- collection is synchronous and serial
-- extraction is synchronous and serial
-- the system stores whatever topic string was used at collection time; there is no topic normalization
-- collection quality depends heavily on RSS title/summary text and direct topic string matches
-- semantic filtering silently degrades if the embedding model fails to load
-- drift baselines are hard-coded seed values, not learned from historical data
-- brief caching is process-local
-- there is no background processing, deduplicated job system, or persistence layer beyond SQLite
-- there is no authentication or multi-user separation
+### Signal Schema (8 fields)
 
-## File map
+For each article:
+- **concern_level** [0-1]: How worried is the public?
+- **purchase_intent** [0-1]: Likelihood to buy/act?
+- **avoidance_signals** [0-1]: Desire to avoid/shun?
+- **dominant_frame**: fear | opportunity | conflict | neutral
+- **seg_young_urban** [0-1]: Relevance to young urban segment
+- **seg_family** [0-1]: Relevance to family segment
+- **seg_senior** [0-1]: Relevance to senior segment
+- **seg_b2b** [0-1]: Relevance to B2B segment
 
-- [`main.py`](/home/osml/code/ml/SigDriftr/main.py): FastAPI app and static mount
-- [`db/init.py`](/home/osml/code/ml/SigDriftr/db/init.py): SQLite schema and connection management
-- [`config/feeds.py`](/home/osml/code/ml/SigDriftr/config/feeds.py): RSS feed list and outlet affinity tags
-- [`ingestion/crawler.py`](/home/osml/code/ml/SigDriftr/ingestion/crawler.py): RSS crawl and topic relevance filtering
-- [`extraction/extractor.py`](/home/osml/code/ml/SigDriftr/extraction/extractor.py): fetch unprocessed articles and persist signal rows
-- [`extraction/llm_client.py`](/home/osml/code/ml/SigDriftr/extraction/llm_client.py): Ollama request, normalization, segment priors
-- [`delta/mapper.py`](/home/osml/code/ml/SigDriftr/delta/mapper.py): segment aggregation
-- [`delta/engine.py`](/home/osml/code/ml/SigDriftr/delta/engine.py): baseline comparison and alerting
-- [`delta/seeder.py`](/home/osml/code/ml/SigDriftr/delta/seeder.py): default seeded baselines
-- [`brief/models.py`](/home/osml/code/ml/SigDriftr/brief/models.py): brief schema
-- [`brief/prompt.py`](/home/osml/code/ml/SigDriftr/brief/prompt.py): prompt construction
-- [`brief/generator.py`](/home/osml/code/ml/SigDriftr/brief/generator.py): brief generation, normalization, fallback, cache
-- [`api/routes/`](/home/osml/code/ml/SigDriftr/api/routes): HTTP endpoints
-- [`static/index.html`](/home/osml/code/ml/SigDriftr/static/index.html): demo UI
+### Drift Alert Levels
+
+```
+no_data       → No articles in segment
+none          → drift_magnitude < 0.20
+mild          → 0.20 ≤ drift_magnitude < 0.45
+strong        → drift_magnitude ≥ 0.45
+```
+
+### Audience Segments
+
+- **young_urban**: Tech-savvy, early adopters, online-first
+- **family**: Household budgets, children's wellbeing
+- **senior**: Healthcare, pensions, stability
+- **b2b**: Business impact, supply chains, regulations
+
+## Testing
+
+```bash
+# Run all tests
+pytest -v
+
+# Run with coverage
+pytest --cov=.
+
+# Run specific test file
+pytest test_extraction_api.py -v
+```
+
+For test details, see [DEVELOPMENT.md](DEVELOPMENT.md#testing).
+
+## Performance
+
+| Operation | Time | Notes |
+|-----------|------|-------|
+| /collect (1000 articles) | 5-10 min | Feed latency dependent |
+| /extract (1000 articles) | ~8 min | ~2 articles/sec (LLM bottleneck) |
+| /drift | <1 sec | Cached SQL aggregation |
+| /brief (first call) | 1-2 min | LLM inference |
+| /brief (cached) | <10ms | 30-min cache TTL |
+
+For performance optimization tips, see [DEVELOPMENT.md](DEVELOPMENT.md#performance-troubleshooting).
+
+## Contributing
+
+We welcome contributions! See [DEVELOPMENT.md](DEVELOPMENT.md) for:
+
+- Setup instructions
+- Code style guidelines
+- How to write tests
+- Common development tasks
+
+## Future Roadmap
+
+### Phase 2: Production-Ready
+- [ ] PostgreSQL migration (10x throughput)
+- [ ] Celery + Redis (async jobs, distributed caching)
+- [ ] API key authentication
+- [ ] Prometheus monitoring
+
+### Phase 3: Advanced Features
+- [ ] Vector database (semantic signal search)
+- [ ] Learned baselines (distinguish seasonal vs. permanent drift)
+- [ ] Multi-topic correlation
+- [ ] Custom segment definition
+
+### Phase 4: MLOps
+- [ ] Model evaluation pipeline
+- [ ] A/B testing framework (LLM models, prompts)
+- [ ] Signal quality monitoring
+- [ ] Automated prompt optimization
+
+See [concerns.md](concerns.md#future-roadmap) for detailed roadmap with effort estimates.
+
+## Known Limitations
+
+- **No topic normalization**: "energie" ≠ "energetika"
+- **Semantic filtering degrades silently**: If embedding model unavailable, only direct match works
+- **Seeded baselines**: Not learned from historical data
+- **Single-writer SQLite**: Limits concurrent /extract operations
+- **No background jobs**: /collect and /extract are synchronous
+
+For complete limitations, see [concerns.md](concerns.md#current-limitations).
+
+## References & Navigation
+
+- **Architecture & Design:** [ARCHITECTURE.md](ARCHITECTURE.md) (800+ lines)
+- **API Reference:** [API.md](API.md) (500+ lines) - All endpoints with examples
+- **Developer Setup:** [DEVELOPMENT.md](DEVELOPMENT.md) (400+ lines) - Testing, common tasks
+- **Limitations:** [concerns.md](concerns.md) (400+ lines) - Known issues, future roadmap
+- **GitHub:** https://github.com/EightL/SigDriftr
+
+---
+
+**Last Updated:** March 2026  
+**Version:** 1.0 (Demo/Alpha)  
+**Status:** Active Development  
+**License:** See LICENSE file

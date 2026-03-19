@@ -114,6 +114,66 @@ def test_pipeline_cluster_drift_route_passes_args_through() -> None:
     mock_drift.assert_called_once_with("run-drift-1")
 
 
+def test_pipeline_hierarchical_brief_route_passes_args_through() -> None:
+    pytest.importorskip("fastapi")
+    from api.routes import pipeline as pipeline_route
+    from brief.models import ResearchBrief
+
+    payload = {
+        "topic": "inflace",
+        "status": "ready",
+        "headline": "Seniors show the strongest movement",
+        "narrative": "Structured hierarchical summary.",
+        "most_affected_segment": "senior",
+        "drift_type": "concern_spike",
+        "alert_level": "strong",
+        "hypotheses": [
+            {
+                "segment": "senior",
+                "hypothesis": "Seniors will remain the most reactive segment.",
+                "signal_basis": "concern_level +0.12",
+                "suggested_question": "How much has recent coverage changed your behavior?",
+            },
+            {
+                "segment": "family",
+                "hypothesis": "Families will show a secondary shift.",
+                "signal_basis": "avoidance_signals +0.04",
+                "suggested_question": "How much has recent coverage changed household decisions?",
+            },
+            {
+                "segment": "young_urban",
+                "hypothesis": "Young urban adults will remain comparatively stable.",
+                "signal_basis": "purchase_intent -0.02",
+                "suggested_question": "How likely are you to change a planned purchase?",
+            },
+        ],
+        "generated_at": "2026-03-19T10:00:00+00:00",
+        "model_used": "qwen2.5:7b-instruct",
+    }
+
+    with patch(
+        "api.routes.pipeline.generate_hierarchical_brief_cached",
+        return_value=payload,
+    ) as mock_brief:
+        result = pipeline_route.run_hierarchical_brief_stage(
+            topic="inflace",
+            country="DE",
+            source="spiegel",
+            language="de",
+            run_id="run-drift-3",
+        )
+
+    validated = ResearchBrief.model_validate(result)
+    assert validated.most_affected_segment == "senior"
+    mock_brief.assert_called_once_with(
+        topic="inflace",
+        country="DE",
+        source="spiegel",
+        language="de",
+        run_id="run-drift-3",
+    )
+
+
 def test_pipeline_latest_clusters_route_passes_scope_filters_through() -> None:
     pytest.importorskip("fastapi")
     from api.models import LatestClusterRunResponse
@@ -340,6 +400,36 @@ def test_pipeline_latest_clusters_route_raises_404_when_scope_missing() -> None:
             pipeline_route.get_latest_clusters(topic="inflace")
 
     assert exc_info.value.status_code == 404
+
+
+def test_pipeline_hierarchical_brief_route_raises_404_when_run_missing() -> None:
+    pytest.importorskip("fastapi")
+    from fastapi import HTTPException
+    from api.routes import pipeline as pipeline_route
+
+    with patch(
+        "api.routes.pipeline.generate_hierarchical_brief_cached",
+        side_effect=LookupError("Cluster drift run 'missing-run' was not found."),
+    ):
+        with pytest.raises(HTTPException) as exc_info:
+            pipeline_route.run_hierarchical_brief_stage(run_id="missing-run")
+
+    assert exc_info.value.status_code == 404
+
+
+def test_pipeline_hierarchical_brief_route_raises_409_when_scope_missing() -> None:
+    pytest.importorskip("fastapi")
+    from fastapi import HTTPException
+    from api.routes import pipeline as pipeline_route
+
+    with patch(
+        "api.routes.pipeline.generate_hierarchical_brief_cached",
+        side_effect=RuntimeError("No cluster drift run found for the requested scope."),
+    ):
+        with pytest.raises(HTTPException) as exc_info:
+            pipeline_route.run_hierarchical_brief_stage(topic="inflace")
+
+    assert exc_info.value.status_code == 409
 
 
 def test_cluster_drift_route_raises_404_when_scope_missing() -> None:

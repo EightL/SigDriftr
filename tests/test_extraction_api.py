@@ -179,7 +179,7 @@ def test_collect_route_runs_collection_cycle() -> None:
 def test_pipeline_route_returns_brief_summary() -> None:
     pytest.importorskip("fastapi")
     from api.routes import pipeline as pipeline_route
-    from brief.models import BriefConfidenceContext, ResearchBrief
+    from brief.models import BriefConfidenceContext
 
     async def run_test() -> None:
         with patch(
@@ -192,16 +192,12 @@ def test_pipeline_route_returns_brief_summary() -> None:
                 "topic": "inflace",
             },
         ) as mock_collect, patch(
-            "api.routes.pipeline.generate_brief_cached",
-            return_value=ResearchBrief(
-                topic="inflace",
-                status="warming",
-                headline="Inflation concern rises among families",
-                narrative="Structured summary.",
-                most_affected_segment="family",
-                drift_type="concern_spike",
-                alert_level="mild",
-                confidence_context=BriefConfidenceContext(
+            "api.routes.pipeline.get_brief_summary",
+            return_value={
+                "topic": "inflace",
+                "status": "warming",
+                "alert_level": "mild",
+                "confidence_context": BriefConfidenceContext(
                     segment_confidence={
                         "young_urban": 0.4,
                         "family": 0.7,
@@ -209,29 +205,7 @@ def test_pipeline_route_returns_brief_summary() -> None:
                         "b2b": 0.3,
                     }
                 ),
-                hypotheses=[
-                    {
-                        "segment": "family",
-                        "hypothesis": "Families will cut discretionary spending.",
-                        "signal_basis": "concern_level +0.12",
-                        "suggested_question": "How much has inflation coverage changed household spending?",
-                    },
-                    {
-                        "segment": "senior",
-                        "hypothesis": "Seniors remain cautious.",
-                        "signal_basis": "avoidance_signals +0.04",
-                        "suggested_question": "How likely are you to postpone purchases?",
-                    },
-                    {
-                        "segment": "young_urban",
-                        "hypothesis": "Young urban adults will delay non-essentials.",
-                        "signal_basis": "purchase_intent -0.03",
-                        "suggested_question": "How likely are you to delay a planned purchase?",
-                    },
-                ],
-                generated_at="2026-03-18T00:00:00+00:00",
-                model_used="qwen2.5:7b-instruct",
-            ),
+            },
         ) as mock_brief:
             result = await pipeline_route.run_pipeline("inflace")
 
@@ -251,7 +225,12 @@ def test_pipeline_route_returns_brief_summary() -> None:
             },
         }
         mock_collect.assert_awaited_once_with("inflace", country="", source="")
-        mock_brief.assert_called_once_with("inflace")
+        mock_brief.assert_called_once_with(
+            "inflace",
+            country="",
+            source="",
+            language=None,
+        )
 
     asyncio.run(run_test())
 

@@ -100,9 +100,23 @@ def _compute_confidence(
     return round(_clamp(confidence), 4)
 
 
-def compute_drift(topic: str, days_back: int = 7) -> list[dict]:
+def compute_drift(
+    topic: str,
+    days_back: int = 7,
+    *,
+    country: str = "",
+    source: str = "",
+    language: str | None = None,
+) -> list[dict]:
     ensure_topic_baselines(topic)
-    profiles = compute_segment_profiles(topic, days_back, learn_baseline=False)
+    profiles = compute_segment_profiles(
+        topic,
+        days_back,
+        learn_baseline=False,
+        country=country,
+        source=source,
+        language=language,
+    )
     domain = topic_to_domain(topic)
     domain_config = get_domain_config(domain)
     signal_weights = domain_config["signal_weights"]

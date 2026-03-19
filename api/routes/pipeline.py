@@ -8,7 +8,10 @@ from api.models import (
     LatestClusterRunResponse,
 )
 from api.pipeline import run_collection_cycle
-from brief.generator import generate_brief_cached
+from brief.generator import (
+    generate_hierarchical_brief_cached,
+    get_brief_summary,
+)
 from brief.models import ResearchBrief
 from clustering.clustering_service import get_latest_cluster_run, run_clustering
 from delta.cluster_drift import run_cluster_drift
@@ -24,17 +27,24 @@ async def run_pipeline(
     topic: str = Query(..., min_length=1),
     country: str = "",
     source: str = "",
+    language: str | None = None,
 ) -> dict[str, object]:
     collect_result = await run_collection_cycle(topic, country=country, source=source)
-    brief: ResearchBrief = generate_brief_cached(topic)
+    brief_summary = get_brief_summary(
+        topic,
+        country=country,
+        source=source,
+        language=language,
+    )
+    confidence_context = brief_summary.get("confidence_context")
     return {
         **collect_result,
-        "brief_topic": brief.topic,
-        "brief_status": brief.status,
-        "brief_alert_level": brief.alert_level,
+        "brief_topic": brief_summary["topic"],
+        "brief_status": brief_summary["status"],
+        "brief_alert_level": brief_summary["alert_level"],
         "brief_confidence": (
-            brief.confidence_context.segment_confidence
-            if brief.confidence_context is not None
+            confidence_context.segment_confidence
+            if confidence_context is not None
             else {}
         ),
     }
@@ -103,6 +113,33 @@ def run_cluster_drift_stage(run_id: str = Query(..., min_length=1)) -> dict[str,
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/pipeline/brief/hierarchical", response_model=ResearchBrief)
+def run_hierarchical_brief_stage(
+    topic: str | None = Query(default=None, min_length=1),
+    country: str = "",
+    source: str = "",
+    language: str | None = None,
+    run_id: str | None = Query(default=None, min_length=1),
+) -> ResearchBrief:
+    if run_id is None and topic is None:
+        raise HTTPException(
+            status_code=400,
+            detail="topic is required when run_id is not provided.",
+        )
+    try:
+        return generate_hierarchical_brief_cached(
+            topic=topic or "",
+            country=country,
+            source=source,
+            language=language,
+            run_id=run_id,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 

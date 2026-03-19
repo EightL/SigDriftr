@@ -126,6 +126,24 @@ def build_brief_payload(topic: str, segment: str, alert_level: str) -> dict[str,
     }
 
 
+def build_analyst_payload() -> dict[str, object]:
+    return {
+        "facts": ["The leading segment shows the clearest movement in the current window."],
+        "numeric_changes": ["concern_level +0.12"],
+        "cited_clusters": ["track-1"],
+        "cited_articles": ["article-1"],
+        "evidence_gaps": [],
+    }
+
+
+def build_explainer_payload(segment: str) -> dict[str, object]:
+    return {
+        "what_changed": f"{segment.replace('_', ' ').title()} is seeing the strongest recent shift.",
+        "for_whom": f"{segment.replace('_', ' ').title()} is the primary affected segment.",
+        "uncertainty_and_caveats": [],
+    }
+
+
 def test_run_collection_cycle_chains_extract_and_rewards() -> None:
     stub_generator = types.ModuleType("brief.generator")
     stub_generator.clear_brief_cache = Mock()
@@ -220,7 +238,11 @@ def test_trust_state_smoke_path_covers_cold_warming_and_ready() -> None:
         with patch(
             "brief.generator._call_ollama_json",
             side_effect=[
+                build_analyst_payload(),
+                build_explainer_payload("young_urban"),
                 build_brief_payload("warming-topic", "young_urban", "mild"),
+                build_analyst_payload(),
+                build_explainer_payload("senior"),
                 build_brief_payload("ready-topic", "senior", "strong"),
             ],
         ) as mock_call:
@@ -234,7 +256,7 @@ def test_trust_state_smoke_path_covers_cold_warming_and_ready() -> None:
     assert cold_brief.alert_level == "none"
     assert warming_brief.status == "warming"
     assert ready_brief.status == "ready"
-    assert mock_call.call_count == 2
+    assert mock_call.call_count == 6
 
 
 def test_record_recent_signal_rewards_only_replays_fresh_articles() -> None:

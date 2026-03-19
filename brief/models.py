@@ -24,6 +24,25 @@ class BriefConfidenceContext(BaseModel):
     baseline_sample_count: dict[SegmentKey, int] = Field(default_factory=dict)
 
 
+class BriefSourceScope(BaseModel):
+    country: str = ""
+    source: str = ""
+    language: str | None = None
+
+
+class ClusterPriorityWeight(BaseModel):
+    track_id: str
+    cluster_id: int | None = None
+    match_type: str
+    priority: float
+
+
+class BriefCalibrationWeights(BaseModel):
+    source_mode: Literal["cluster_drift", "legacy_drift"]
+    segment_priority: dict[SegmentKey, float] = Field(default_factory=dict)
+    top_cluster_priorities: list[ClusterPriorityWeight] = Field(default_factory=list)
+
+
 class ResearchBrief(BaseModel):
     topic: str
     status: Literal["insufficient_data", "warming", "ready"] = Field(
@@ -50,5 +69,12 @@ class ResearchBrief(BaseModel):
         default=None,
         description="Per-segment calibration metadata; None when not available.",
     )
+    generation_mode: Literal[
+        "hierarchical_cluster",
+        "hierarchical_legacy",
+        "fallback",
+    ] | None = None
+    calibration_weights: BriefCalibrationWeights | None = None
+    source_scope: BriefSourceScope | None = None
     generated_at: str
     model_used: str

@@ -116,3 +116,15 @@ class DigestResponse(BaseModel):
     summary_text: str
     key_points: list[str]
     articles: list[DigestArticle]
+
+
+class EmbeddingStageResponse(BaseModel):
+    model_name: str
+    embedding_dim: int
+    selected: int
+    embedded: int
+    already_current: int
+    retried_failed: int
+    stale_reembedded: int
+    failed: int
+    duration_s: float

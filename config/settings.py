@@ -37,6 +37,13 @@ BANDIT_MAX_FEEDS_PER_CRAWL = 4
 CRAWL_FETCH_CONCURRENCY = 4
 CRAWL_FEED_TIMEOUT_SECONDS = 15
 
+EMBED_MODEL_NAME = os.environ.get(
+    "EMBED_MODEL_NAME",
+    "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+).strip()
+EMBED_BATCH_SIZE = max(1, int(os.environ.get("EMBED_BATCH_SIZE", "32")))
+EMBED_LIMIT_DEFAULT = max(1, int(os.environ.get("EMBED_LIMIT_DEFAULT", "200")))
+
 SCHEDULED_TOPICS = _parse_scheduled_topics(["inflace", "energie", "zdravi"])
 PIPELINE_INTERVAL_MINUTES = max(
     1,

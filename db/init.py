@@ -129,6 +129,39 @@ def run_migrations(conn: sqlite3.Connection) -> None:
             WHERE topic IS NOT NULL AND TRIM(topic) != ''
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS article_embeddings (
+                id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                article_id          TEXT    NOT NULL REFERENCES articles(id),
+                model_name          TEXT    NOT NULL DEFAULT 'sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2',
+                model_version       TEXT,
+                embedding_dim       INTEGER NOT NULL DEFAULT 384,
+                embedding_vector    TEXT    NOT NULL,
+                embedding_text      TEXT    NOT NULL,
+                embedding_text_hash TEXT    NOT NULL,
+                language            TEXT,
+                status              TEXT    NOT NULL DEFAULT 'pending',
+                error_message       TEXT,
+                embedded_at         TEXT,
+                created_at          TEXT    NOT NULL DEFAULT (datetime('now')),
+                updated_at          TEXT    NOT NULL DEFAULT (datetime('now')),
+                UNIQUE (article_id, model_name, embedding_text_hash)
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_ae_article_model_updated
+            ON article_embeddings(article_id, model_name, updated_at)
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_ae_model_status_updated
+            ON article_embeddings(model_name, status, updated_at)
+            """
+        )
 
 
 def get_conn() -> sqlite3.Connection:
@@ -254,6 +287,39 @@ def get_conn() -> sqlite3.Connection:
                 total_reward REAL NOT NULL DEFAULT 0.0,
                 updated_at   TEXT NOT NULL
             );
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS article_embeddings (
+                id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                article_id          TEXT    NOT NULL REFERENCES articles(id),
+                model_name          TEXT    NOT NULL DEFAULT 'sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2',
+                model_version       TEXT,
+                embedding_dim       INTEGER NOT NULL DEFAULT 384,
+                embedding_vector    TEXT    NOT NULL,
+                embedding_text      TEXT    NOT NULL,
+                embedding_text_hash TEXT    NOT NULL,
+                language            TEXT,
+                status              TEXT    NOT NULL DEFAULT 'pending',
+                error_message       TEXT,
+                embedded_at         TEXT,
+                created_at          TEXT    NOT NULL DEFAULT (datetime('now')),
+                updated_at          TEXT    NOT NULL DEFAULT (datetime('now')),
+                UNIQUE (article_id, model_name, embedding_text_hash)
+            );
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_ae_article_model_updated
+            ON article_embeddings(article_id, model_name, updated_at)
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_ae_model_status_updated
+            ON article_embeddings(model_name, status, updated_at)
             """
         )
         run_migrations(conn)

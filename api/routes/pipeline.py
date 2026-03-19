@@ -1,8 +1,10 @@
 from fastapi import APIRouter
 
+from api.models import EmbeddingStageResponse
 from api.pipeline import run_collection_cycle
 from brief.generator import generate_brief_cached
 from brief.models import ResearchBrief
+from extraction.embedding_service import embed_pending_articles
 
 
 router = APIRouter()
@@ -27,3 +29,18 @@ async def run_pipeline(
             else {}
         ),
     }
+
+
+@router.post("/pipeline/embed", response_model=EmbeddingStageResponse)
+def run_embedding_stage(
+    topic: str | None = None,
+    country: str | None = None,
+    source: str | None = None,
+    limit: int = 200,
+) -> dict[str, object]:
+    return embed_pending_articles(
+        limit=limit,
+        topic=topic,
+        country=country,
+        source=source,
+    )

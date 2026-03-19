@@ -13,38 +13,46 @@ _local = threading.local()
 
 def run_migrations(conn: sqlite3.Connection) -> None:
     """Apply idempotent schema migrations for existing databases."""
-    article_columns = {
-        row[1]
-        for row in conn.execute("PRAGMA table_info(articles)").fetchall()
+    table_names = {
+        row[0]
+        for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table'"
+        ).fetchall()
     }
-    if "body" not in article_columns:
-        conn.execute(
-            """
-            ALTER TABLE articles
-            ADD COLUMN body TEXT
-            """
-        )
-    if "country" not in article_columns:
-        conn.execute(
-            """
-            ALTER TABLE articles
-            ADD COLUMN country TEXT NOT NULL DEFAULT 'CZ'
-            """
-        )
-    if "language" not in article_columns:
-        conn.execute(
-            """
-            ALTER TABLE articles
-            ADD COLUMN language TEXT NOT NULL DEFAULT 'cs'
-            """
-        )
-    if "canonical_url" not in article_columns:
-        conn.execute(
-            """
-            ALTER TABLE articles
-            ADD COLUMN canonical_url TEXT
-            """
-        )
+
+    if "articles" in table_names:
+        article_columns = {
+            row[1]
+            for row in conn.execute("PRAGMA table_info(articles)").fetchall()
+        }
+        if "body" not in article_columns:
+            conn.execute(
+                """
+                ALTER TABLE articles
+                ADD COLUMN body TEXT
+                """
+            )
+        if "country" not in article_columns:
+            conn.execute(
+                """
+                ALTER TABLE articles
+                ADD COLUMN country TEXT NOT NULL DEFAULT 'CZ'
+                """
+            )
+        if "language" not in article_columns:
+            conn.execute(
+                """
+                ALTER TABLE articles
+                ADD COLUMN language TEXT NOT NULL DEFAULT 'cs'
+                """
+            )
+        if "canonical_url" not in article_columns:
+            conn.execute(
+                """
+                ALTER TABLE articles
+                ADD COLUMN canonical_url TEXT
+                """
+            )
 
     columns = {
         row[1]
@@ -66,60 +74,61 @@ def run_migrations(conn: sqlite3.Connection) -> None:
             """
         )
 
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS article_topics (
-            article_id       TEXT NOT NULL,
-            topic            TEXT NOT NULL,
-            relevance_score  REAL NOT NULL DEFAULT 1.0,
-            matched_at       TEXT NOT NULL,
-            PRIMARY KEY (article_id, topic),
-            FOREIGN KEY (article_id) REFERENCES articles(id)
+    if "articles" in table_names:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS article_topics (
+                article_id       TEXT NOT NULL,
+                topic            TEXT NOT NULL,
+                relevance_score  REAL NOT NULL DEFAULT 1.0,
+                matched_at       TEXT NOT NULL,
+                PRIMARY KEY (article_id, topic),
+                FOREIGN KEY (article_id) REFERENCES articles(id)
+            )
+            """
         )
-        """
-    )
-    conn.execute(
-        """
-        CREATE INDEX IF NOT EXISTS idx_article_topics_topic_matched_at
-        ON article_topics(topic, matched_at DESC)
-        """
-    )
-    conn.execute(
-        """
-        CREATE INDEX IF NOT EXISTS idx_articles_country_outlet
-        ON articles(country, outlet)
-        """
-    )
-    conn.execute(
-        """
-        CREATE TRIGGER IF NOT EXISTS trg_articles_insert_topic_link
-        AFTER INSERT ON articles
-        WHEN NEW.topic IS NOT NULL AND TRIM(NEW.topic) != ''
-        BEGIN
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_article_topics_topic_matched_at
+            ON article_topics(topic, matched_at DESC)
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_articles_country_outlet
+            ON articles(country, outlet)
+            """
+        )
+        conn.execute(
+            """
+            CREATE TRIGGER IF NOT EXISTS trg_articles_insert_topic_link
+            AFTER INSERT ON articles
+            WHEN NEW.topic IS NOT NULL AND TRIM(NEW.topic) != ''
+            BEGIN
+                INSERT OR IGNORE INTO article_topics(article_id, topic, relevance_score, matched_at)
+                VALUES (NEW.id, NEW.topic, 1.0, COALESCE(NEW.fetched_at, CURRENT_TIMESTAMP));
+            END
+            """
+        )
+        conn.execute(
+            """
+            CREATE TRIGGER IF NOT EXISTS trg_articles_update_topic_link
+            AFTER UPDATE OF topic ON articles
+            WHEN NEW.topic IS NOT NULL AND TRIM(NEW.topic) != ''
+            BEGIN
+                INSERT OR IGNORE INTO article_topics(article_id, topic, relevance_score, matched_at)
+                VALUES (NEW.id, NEW.topic, 1.0, COALESCE(NEW.fetched_at, CURRENT_TIMESTAMP));
+            END
+            """
+        )
+        conn.execute(
+            """
             INSERT OR IGNORE INTO article_topics(article_id, topic, relevance_score, matched_at)
-            VALUES (NEW.id, NEW.topic, 1.0, COALESCE(NEW.fetched_at, CURRENT_TIMESTAMP));
-        END
-        """
-    )
-    conn.execute(
-        """
-        CREATE TRIGGER IF NOT EXISTS trg_articles_update_topic_link
-        AFTER UPDATE OF topic ON articles
-        WHEN NEW.topic IS NOT NULL AND TRIM(NEW.topic) != ''
-        BEGIN
-            INSERT OR IGNORE INTO article_topics(article_id, topic, relevance_score, matched_at)
-            VALUES (NEW.id, NEW.topic, 1.0, COALESCE(NEW.fetched_at, CURRENT_TIMESTAMP));
-        END
-        """
-    )
-    conn.execute(
-        """
-        INSERT OR IGNORE INTO article_topics(article_id, topic, relevance_score, matched_at)
-        SELECT id, topic, 1.0, COALESCE(fetched_at, CURRENT_TIMESTAMP)
-        FROM articles
-        WHERE topic IS NOT NULL AND TRIM(topic) != ''
-        """
-    )
+            SELECT id, topic, 1.0, COALESCE(fetched_at, CURRENT_TIMESTAMP)
+            FROM articles
+            WHERE topic IS NOT NULL AND TRIM(topic) != ''
+            """
+        )
 
 
 def get_conn() -> sqlite3.Connection:

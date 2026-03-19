@@ -322,5 +322,5 @@ def crawl(topic: str, country: str = "", source: str = "") -> int:
         return asyncio.run(_crawl_async(topic, country=country, source=source))
     raise RuntimeError(
         "crawl() is a synchronous wrapper and cannot run inside an active event loop; "
-        "await _crawl_async(topic, country=..., source=...) instead."
+        "await _crawl_async(topic) instead; optional country/source filters may also be passed."
     )

@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+from urllib.parse import urlsplit
 
-FEEDS = [
+from config.german_feeds import GERMAN_FEEDS
+from config.global_feeds import GLOBAL_FEEDS
+
+
+_BASE_FEEDS = [
     {
         "outlet": "irozhlas",
         "rss_url": "https://www.irozhlas.cz/rss/irozhlas",
@@ -112,6 +117,64 @@ FEEDS = [
 VALID_COUNTRIES = {"CZ", "DE", "GLOBAL"}
 
 
+def _normalize_url(url: str) -> str:
+    parsed = urlsplit((url or "").strip())
+    host = parsed.netloc.lower()
+    path = parsed.path.rstrip("/")
+    query = f"?{parsed.query}" if parsed.query else ""
+    return f"{host}{path}{query}"
+
+
+def _coerce_feed(
+    raw_feed: dict,
+    *,
+    country: str,
+    language: str,
+) -> dict[str, object]:
+    return {
+        "outlet": str(raw_feed["outlet"]).strip(),
+        "rss_url": str(raw_feed["rss_url"]).strip(),
+        "affinity_tag": str(raw_feed.get("affinity_tag", "mainstream")).strip()
+        or "mainstream",
+        "country": country,
+        "language": language,
+        "enabled": bool(raw_feed.get("enabled", True)),
+    }
+
+
+def _dedupe_feeds(feeds: list[dict[str, object]]) -> list[dict[str, object]]:
+    deduped: list[dict[str, object]] = []
+    seen_outlets: set[str] = set()
+    seen_urls: set[str] = set()
+
+    for feed in feeds:
+        outlet = str(feed.get("outlet", "")).strip().lower()
+        url = _normalize_url(str(feed.get("rss_url", "")))
+        if not outlet or not url:
+            continue
+        if outlet in seen_outlets or url in seen_urls:
+            continue
+        seen_outlets.add(outlet)
+        seen_urls.add(url)
+        deduped.append(feed)
+    return deduped
+
+
+def _extra_feeds() -> list[dict[str, object]]:
+    german = [
+        _coerce_feed(feed, country="DE", language="de")
+        for feed in GERMAN_FEEDS
+    ]
+    global_news = [
+        _coerce_feed(feed, country="GLOBAL", language="en")
+        for feed in GLOBAL_FEEDS
+    ]
+    return german + global_news
+
+
+FEEDS = _dedupe_feeds([*_BASE_FEEDS, *_extra_feeds()])
+
+
 def normalize_country(country: str) -> str:
     return country.strip().upper()
 
@@ -124,7 +187,10 @@ def get_enabled_feeds(country: str = "", source: str = "") -> list[dict]:
     for feed in FEEDS:
         if not feed.get("enabled", True):
             continue
-        if normalized_country and normalize_country(str(feed.get("country", ""))) != normalized_country:
+        if (
+            normalized_country
+            and normalize_country(str(feed.get("country", ""))) != normalized_country
+        ):
             continue
         if normalized_source and str(feed.get("outlet", "")).lower() != normalized_source:
             continue

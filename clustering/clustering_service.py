@@ -103,6 +103,52 @@ def _safe_json_list(raw: str | None) -> list[object]:
     return parsed if isinstance(parsed, list) else []
 
 
+def _collapse_text(value: str) -> str:
+    return " ".join((value or "").split()).strip()
+
+
+def _body_excerpt(value: str, limit: int = 280) -> str:
+    collapsed = _collapse_text(value)
+    if len(collapsed) <= limit:
+        return collapsed
+    clipped = collapsed[: limit - 3].rstrip()
+    if " " in clipped:
+        clipped = clipped.rsplit(" ", 1)[0]
+    return f"{clipped}..."
+
+
+def _load_article_context(article_ids: list[str]) -> list[dict[str, object]]:
+    if not article_ids:
+        return []
+
+    conn = get_conn()
+    placeholders = ", ".join("?" for _ in article_ids)
+    rows = conn.execute(
+        f"""
+        SELECT id, title, summary, body, outlet, country, language, url,
+               COALESCE(published_at, fetched_at)
+        FROM articles
+        WHERE id IN ({placeholders})
+        """,
+        article_ids,
+    ).fetchall()
+    article_map = {
+        str(row[0]): {
+            "article_id": str(row[0]),
+            "title": row[1] or "[no title]",
+            "summary": _collapse_text(row[2] or ""),
+            "body_excerpt": _body_excerpt(row[3] or ""),
+            "outlet": row[4] or "",
+            "country": row[5] or "",
+            "language": row[6],
+            "url": row[7] or "",
+            "published_at": row[8],
+        }
+        for row in rows
+    }
+    return [article_map[article_id] for article_id in article_ids if article_id in article_map]
+
+
 def _select_embeddings(
     *,
     topic: str,
@@ -552,6 +598,9 @@ def get_latest_cluster_run(
             "exemplar_article_ids": [
                 str(item) for item in _safe_json_list(row[16]) if isinstance(item, str)
             ],
+            "exemplar_articles": _load_article_context(
+                [str(item) for item in _safe_json_list(row[16]) if isinstance(item, str)]
+            ),
             "extractor_provider": row[17],
             "extractor_model": row[18],
             "schema_version": row[19],

@@ -12,6 +12,7 @@ ValidationError = pydantic.ValidationError
 
 from brief.generator import (
     BRIEF_CACHE_TTL,
+    BriefArtifacts,
     OLLAMA_MODEL,
     _select_cluster_observations,
     _call_ollama_json,
@@ -74,6 +75,21 @@ def sample_brief(topic: str = "inflace", *, headline: str | None = None) -> Rese
         ],
         generated_at="2026-03-17T00:00:00+00:00",
         model_used=OLLAMA_MODEL,
+    )
+
+
+def sample_artifacts(topic: str = "inflace", *, headline: str | None = None) -> BriefArtifacts:
+    return BriefArtifacts(
+        brief=sample_brief(topic, headline=headline),
+        support={
+            "status": "ready",
+            "source_mode": "legacy_drift",
+            "generation_mode": "hierarchical_legacy",
+            "cited_track_ids": [],
+            "cited_article_ids": [],
+            "selected_observation_ids": [],
+            "fallback_note": None,
+        },
     )
 
 
@@ -1279,8 +1295,8 @@ def test_generate_brief_cached_reuses_recent_result() -> None:
             "brief.generator._build_bundle",
             return_value=Mock(),
         ), patch(
-            "brief.generator._generate_hierarchical_brief",
-            return_value=expected,
+            "brief.generator._generate_hierarchical_brief_artifacts",
+            return_value=sample_artifacts(headline=expected.headline),
         ) as mock_generate:
             first = generate_brief_cached("inflace")
             second = generate_brief_cached("inflace")
@@ -1317,8 +1333,8 @@ def test_generate_brief_cached_refreshes_stale_result() -> None:
             "brief.generator._build_bundle",
             return_value=Mock(),
         ), patch(
-            "brief.generator._generate_hierarchical_brief",
-            return_value=fresh,
+            "brief.generator._generate_hierarchical_brief_artifacts",
+            return_value=sample_artifacts(headline=fresh.headline),
         ) as mock_generate:
             result = generate_brief_cached("inflace")
 
@@ -1349,8 +1365,11 @@ def test_generate_brief_cached_isolated_by_scope() -> None:
             "brief.generator._build_bundle",
             return_value=Mock(),
         ), patch(
-            "brief.generator._generate_hierarchical_brief",
-            side_effect=[first, second],
+            "brief.generator._generate_hierarchical_brief_artifacts",
+            side_effect=[
+                sample_artifacts(headline=first.headline),
+                sample_artifacts(headline=second.headline),
+            ],
         ) as mock_generate:
             de_first = generate_brief_cached("inflace", country="DE")
             fr_first = generate_brief_cached("inflace", country="FR")

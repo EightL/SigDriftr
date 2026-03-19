@@ -24,13 +24,20 @@ def extract(topic: str = "") -> dict[str, int | str]:
     return {"processed": processed, "topic": topic}
 
 
-@router.get("/signals", response_model=list[SignalRecord])
-def get_signals(
+def query_signals(
     topic: str = "",
-    background_tasks: BackgroundTasks = None,
+    *,
+    country: str = "",
+    source: str = "",
+    language: str | None = None,
 ) -> list[dict]:
     conn = get_conn()
-    drift = compute_drift(topic)
+    drift = compute_drift(
+        topic,
+        country=country,
+        source=source,
+        language=language,
+    )
     segment_confidence = {
         entry["segment"]: {
             "confidence": entry["confidence"],
@@ -41,8 +48,7 @@ def get_signals(
         for entry in drift
     }
     topic_sql, topic_params = topic_filter_sql("a", topic)
-    rows = conn.execute(
-        f"""
+    query = f"""
         SELECT COALESCE(
                    (SELECT at.topic
                     FROM article_topics at
@@ -52,43 +58,82 @@ def get_signals(
                    a.topic,
                    ''
                ) AS effective_topic,
-               s.article_id, s.concern_level, s.purchase_intent,
+               s.article_id, a.title, a.outlet, a.country, a.language, a.url,
+               s.concern_level, s.purchase_intent,
                s.avoidance_signals, s.dominant_frame, s.seg_young_urban,
                s.seg_family, s.seg_senior, s.seg_b2b, s.raw_json, s.extracted_at
         FROM signals s
         JOIN articles a ON a.id = s.article_id
         WHERE 1 = 1
           {topic_sql}
+    """
+    params: list[object] = [*topic_params]
+    if country:
+        query += " AND a.country = ?"
+        params.append(country.strip().upper())
+    if source:
+        query += " AND LOWER(a.outlet) = ?"
+        params.append(source.strip().lower())
+    if language is not None:
+        query += " AND LOWER(a.language) = ?"
+        params.append(language.strip().lower())
+    query += """
         ORDER BY s.extracted_at DESC, s.article_id DESC
-        """,
-        topic_params,
-    ).fetchall()
+    """
+    rows = conn.execute(query, params).fetchall()
 
     records: list[dict] = []
     for row in rows:
-        raw_json = json.loads(row[10]) if row[10] else {}
+        raw_json = json.loads(row[15]) if row[15] else {}
         domain = raw_json.get("domain", "generic")
         records.append(
             {
                 "article_id": row[1],
                 "topic": row[0],
+                "title": row[2] or "[no title]",
+                "outlet": row[3] or "",
+                "country": row[4] or "",
+                "language": row[5],
+                "url": row[6] or "",
                 "domain": domain,
                 "relevant_fields": list(get_domain_config(domain)["relevant_fields"]),
-                "concern_level": row[2],
-                "purchase_intent": row[3],
-                "avoidance_signals": row[4],
-                "dominant_frame": row[5],
-                "seg_young_urban": row[6],
-                "seg_family": row[7],
-                "seg_senior": row[8],
-                "seg_b2b": row[9],
+                "concern_level": row[7],
+                "purchase_intent": row[8],
+                "avoidance_signals": row[9],
+                "dominant_frame": row[10],
+                "seg_young_urban": row[11],
+                "seg_family": row[12],
+                "seg_senior": row[13],
+                "seg_b2b": row[14],
                 "raw_json": raw_json,
-                "extracted_at": row[11],
+                "extracted_at": row[16],
                 "segment_confidence": segment_confidence,
             }
         )
+    return records
+
+
+@router.get("/signals", response_model=list[SignalRecord])
+def get_signals(
+    topic: str = "",
+    country: str = "",
+    source: str = "",
+    language: str | None = None,
+    background_tasks: BackgroundTasks = None,
+) -> list[dict]:
+    records = query_signals(
+        topic,
+        country=country,
+        source=source,
+        language=language,
+    )
 
     if topic and background_tasks is not None:
-        background_tasks.add_task(compute_segment_profiles, topic, 7, True)
+        background_tasks.add_task(
+            compute_segment_profiles,
+            topic,
+            7,
+            True,
+        )
 
     return records

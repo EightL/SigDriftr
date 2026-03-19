@@ -6,11 +6,11 @@ from api.models import (
     ClusterSignalStageResponse,
     EmbeddingStageResponse,
     LatestClusterRunResponse,
+    PipelineRunResponse,
 )
-from api.pipeline import run_collection_cycle
+from api.pipeline import run_full_pipeline
 from brief.generator import (
     generate_hierarchical_brief_cached,
-    get_brief_summary,
 )
 from brief.models import ResearchBrief
 from clustering.clustering_service import get_latest_cluster_run, run_clustering
@@ -22,32 +22,23 @@ from extraction.embedding_service import embed_pending_articles
 router = APIRouter()
 
 
-@router.post("/pipeline/run")
+@router.post("/pipeline/run", response_model=PipelineRunResponse)
 async def run_pipeline(
     topic: str = Query(..., min_length=1),
     country: str = "",
     source: str = "",
     language: str | None = None,
+    window_hours: int = Query(default=24, ge=1),
+    min_cluster_size: int = Query(default=3, ge=1),
 ) -> dict[str, object]:
-    collect_result = await run_collection_cycle(topic, country=country, source=source)
-    brief_summary = get_brief_summary(
+    return await run_full_pipeline(
         topic,
         country=country,
         source=source,
         language=language,
+        window_hours=window_hours,
+        min_cluster_size=min_cluster_size,
     )
-    confidence_context = brief_summary.get("confidence_context")
-    return {
-        **collect_result,
-        "brief_topic": brief_summary["topic"],
-        "brief_status": brief_summary["status"],
-        "brief_alert_level": brief_summary["alert_level"],
-        "brief_confidence": (
-            confidence_context.segment_confidence
-            if confidence_context is not None
-            else {}
-        ),
-    }
 
 
 @router.post("/pipeline/embed", response_model=EmbeddingStageResponse)

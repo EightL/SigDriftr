@@ -18,6 +18,7 @@ from api.routes.calibration import router as calibration_router
 from api.routes.collect import router as collect_router
 from api.routes.health import router as health_router
 from api.routes.history import router as history_router
+from api.routes.output import router as output_router
 from api.routes.pipeline import router as pipeline_router
 from api.routes.signals import router as signals_router
 from api.routes.summaries import router as summaries_router
@@ -48,6 +49,7 @@ app.include_router(history_router, prefix="")
 app.include_router(brief_router, prefix="")
 app.include_router(health_router, prefix="")
 app.include_router(pipeline_router, prefix="")
+app.include_router(output_router, prefix="")
 app.include_router(summaries_router, prefix="")
 app.mount(
     "/ui",

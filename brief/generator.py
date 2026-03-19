@@ -44,6 +44,7 @@ CacheKey = tuple[str, str, str, str | None, str, str | None]
 
 # This cache is intentionally process-local for the single-worker demo setup.
 _brief_cache: dict[CacheKey, tuple[ResearchBrief, datetime]] = {}
+_brief_support_cache: dict[CacheKey, tuple[dict[str, object], datetime]] = {}
 _cache_lock = threading.Lock()
 _SEGMENT_ALIASES = {
     "young_urban": "young_urban",
@@ -128,6 +129,12 @@ class BriefBundle:
     selected_observations: list[dict[str, object]]
     confidence_context: BriefConfidenceContext
     calibration_weights: BriefCalibrationWeights
+
+
+@dataclass(frozen=True)
+class BriefArtifacts:
+    brief: ResearchBrief
+    support: dict[str, object]
 
 
 def _copy_brief(brief: ResearchBrief, **updates: object) -> ResearchBrief:
@@ -249,6 +256,29 @@ def _get_cached_brief_for_resolution(
     return None
 
 
+def _get_cached_brief_support_for_resolution(
+    resolution: BriefSourceResolution,
+    *,
+    run_id: str | None = None,
+) -> dict[str, object] | None:
+    now = datetime.now(timezone.utc)
+    with _cache_lock:
+        for mode_key in _cache_mode_keys(resolution.source_mode):
+            cached = _brief_support_cache.get(
+                _cache_key(
+                    resolution.display_topic,
+                    resolution.country,
+                    resolution.source,
+                    resolution.language,
+                    mode_key,
+                    run_id,
+                )
+            )
+            if cached and now - cached[1] < BRIEF_CACHE_TTL:
+                return dict(cached[0])
+    return None
+
+
 def _store_cached_brief(
     brief: ResearchBrief,
     resolution: BriefSourceResolution,
@@ -267,6 +297,27 @@ def _store_cached_brief(
                 run_id,
             )
         ] = (brief, datetime.now(timezone.utc))
+
+
+def _store_cached_brief_support(
+    support: dict[str, object],
+    brief: ResearchBrief,
+    resolution: BriefSourceResolution,
+    *,
+    run_id: str | None = None,
+) -> None:
+    mode_key = _cache_mode_for_brief(brief, source_mode=resolution.source_mode)
+    with _cache_lock:
+        _brief_support_cache[
+            _cache_key(
+                resolution.display_topic,
+                resolution.country,
+                resolution.source,
+                resolution.language,
+                mode_key,
+                run_id,
+            )
+        ] = (dict(support), datetime.now(timezone.utc))
 
 
 def _safe_json_list(raw: str | None) -> list[object]:
@@ -890,6 +941,13 @@ def _enrich_cluster_observations(
     return enriched
 
 
+def enrich_cluster_observations(
+    run_id: str,
+    observations: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    return _enrich_cluster_observations(run_id, observations)
+
+
 def _build_legacy_observations(
     resolution: BriefSourceResolution,
     segments: list[dict[str, object]],
@@ -1043,6 +1101,33 @@ def _build_bundle(resolution: BriefSourceResolution) -> BriefBundle:
             observations=selected,
         ),
     )
+
+
+def _selected_observation_ids(bundle: BriefBundle) -> list[str]:
+    return [
+        str(item.get("observation_id", item.get("track_id", "")))
+        for item in bundle.selected_observations
+        if str(item.get("observation_id", item.get("track_id", ""))).strip()
+    ]
+
+
+def _brief_support_payload(
+    bundle: BriefBundle,
+    *,
+    generation_mode: str | None,
+    cited_track_ids: list[str] | None = None,
+    cited_article_ids: list[str] | None = None,
+    fallback_note: str | None = None,
+) -> dict[str, object]:
+    return {
+        "status": bundle.status,
+        "source_mode": bundle.resolution.source_mode,
+        "generation_mode": generation_mode,
+        "cited_track_ids": list(dict.fromkeys(cited_track_ids or [])),
+        "cited_article_ids": list(dict.fromkeys(cited_article_ids or [])),
+        "selected_observation_ids": _selected_observation_ids(bundle),
+        "fallback_note": fallback_note,
+    }
 
 
 def _domain_for_bundle(bundle: BriefBundle) -> str:
@@ -1257,12 +1342,23 @@ def _deterministic_fallback_brief(
     return _finalize_brief(brief, bundle, generation_mode="fallback")
 
 
-def _generate_hierarchical_brief(bundle: BriefBundle) -> ResearchBrief:
+def _generate_hierarchical_brief_artifacts(bundle: BriefBundle) -> BriefArtifacts:
     if bundle.status == "insufficient_data":
-        return _finalize_brief(
-            _insufficient_data_brief(bundle.resolution.display_topic, bundle.generated_at),
+        brief = _finalize_brief(
+            _insufficient_data_brief(
+                bundle.resolution.display_topic,
+                bundle.generated_at,
+            ),
             bundle,
             generation_mode=bundle.resolution.generation_mode,
+        )
+        return BriefArtifacts(
+            brief=brief,
+            support=_brief_support_payload(
+                bundle,
+                generation_mode=brief.generation_mode,
+                fallback_note="Insufficient data brief did not emit analyst citations.",
+            ),
         )
 
     analyst: AnalystArtifact | None = None
@@ -1272,23 +1368,60 @@ def _generate_hierarchical_brief(bundle: BriefBundle) -> ResearchBrief:
         analyst = _run_analyst(bundle)
     except (ValidationError, RuntimeError, ValueError) as exc:
         logger.warning("[brief] Analyst failed topic=%s error=%s", bundle.resolution.display_topic, exc)
-        return _deterministic_fallback_brief(bundle)
+        brief = _deterministic_fallback_brief(bundle)
+        return BriefArtifacts(
+            brief=brief,
+            support=_brief_support_payload(
+                bundle,
+                generation_mode=brief.generation_mode,
+                fallback_note="Analyst stage failed; citations unavailable in fallback brief.",
+            ),
+        )
 
     try:
         explainer = _run_explainer(bundle, analyst)
     except (ValidationError, RuntimeError, ValueError) as exc:
         logger.warning("[brief] Explainer failed topic=%s error=%s", bundle.resolution.display_topic, exc)
-        return _deterministic_fallback_brief(bundle, analyst=analyst)
+        brief = _deterministic_fallback_brief(bundle, analyst=analyst)
+        return BriefArtifacts(
+            brief=brief,
+            support=_brief_support_payload(
+                bundle,
+                generation_mode=brief.generation_mode,
+                fallback_note="Explainer stage failed; citations unavailable in fallback brief.",
+            ),
+        )
 
     try:
-        return _run_writer(bundle, analyst, explainer)
+        brief = _run_writer(bundle, analyst, explainer)
+        return BriefArtifacts(
+            brief=brief,
+            support=_brief_support_payload(
+                bundle,
+                generation_mode=brief.generation_mode,
+                cited_track_ids=list(analyst.cited_clusters),
+                cited_article_ids=list(analyst.cited_articles),
+            ),
+        )
     except (ValidationError, RuntimeError, ValueError) as exc:
         logger.warning("[brief] Writer failed topic=%s error=%s", bundle.resolution.display_topic, exc)
-        return _deterministic_fallback_brief(
+        brief = _deterministic_fallback_brief(
             bundle,
             analyst=analyst,
             explainer=explainer,
         )
+        return BriefArtifacts(
+            brief=brief,
+            support=_brief_support_payload(
+                bundle,
+                generation_mode=brief.generation_mode,
+                fallback_note="Writer stage failed; citations unavailable in fallback brief.",
+            ),
+        )
+
+
+def _generate_hierarchical_brief(bundle: BriefBundle) -> ResearchBrief:
+    return _generate_hierarchical_brief_artifacts(bundle).brief
 
 
 def _generate_legacy_single_pass_brief(
@@ -1372,6 +1505,7 @@ def _generate_legacy_single_pass_brief(
 def clear_brief_cache() -> None:
     with _cache_lock:
         _brief_cache.clear()
+        _brief_support_cache.clear()
 
 
 def generate_brief(
@@ -1422,9 +1556,15 @@ def generate_brief_cached(
     if cached is not None:
         return cached
 
-    brief = _generate_hierarchical_brief(_build_bundle(resolution))
-    _store_cached_brief(brief, resolution, run_id=cache_run_id)
-    return brief
+    artifacts = _generate_hierarchical_brief_artifacts(_build_bundle(resolution))
+    _store_cached_brief(artifacts.brief, resolution, run_id=cache_run_id)
+    _store_cached_brief_support(
+        artifacts.support,
+        artifacts.brief,
+        resolution,
+        run_id=cache_run_id,
+    )
+    return artifacts.brief
 
 
 def generate_hierarchical_brief(
@@ -1481,6 +1621,44 @@ def peek_cached_brief(
         require_cluster=False,
     )
     return _get_cached_brief_for_resolution(resolution)
+
+
+def get_brief_support(
+    topic: str,
+    *,
+    country: str = "",
+    source: str = "",
+    language: str | None = None,
+    run_id: str | None = None,
+    prefer_cluster: bool = True,
+    require_cluster: bool = False,
+) -> dict[str, object]:
+    resolution = _resolve_source_reference(
+        topic,
+        country=country,
+        source=source,
+        language=language,
+        run_id=run_id,
+        prefer_cluster=prefer_cluster,
+        require_cluster=require_cluster,
+    )
+    cache_run_id = resolution.run_id if run_id is not None else None
+    cached_support = _get_cached_brief_support_for_resolution(
+        resolution,
+        run_id=cache_run_id,
+    )
+    if cached_support is not None:
+        return cached_support
+
+    artifacts = _generate_hierarchical_brief_artifacts(_build_bundle(resolution))
+    _store_cached_brief(artifacts.brief, resolution, run_id=cache_run_id)
+    _store_cached_brief_support(
+        artifacts.support,
+        artifacts.brief,
+        resolution,
+        run_id=cache_run_id,
+    )
+    return dict(artifacts.support)
 
 
 def get_brief_summary(

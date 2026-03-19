@@ -16,6 +16,11 @@ class SegmentConfidence(BaseModel):
 class SignalRecord(BaseModel):
     article_id: str
     topic: str | None = None
+    title: str | None = None
+    outlet: str | None = None
+    country: str | None = None
+    language: str | None = None
+    url: str | None = None
     domain: str | None = "generic"
     relevant_fields: list[str] | None = None
     concern_level: float | None = None
@@ -105,6 +110,18 @@ class DigestArticle(BaseModel):
     relevance_score: float
 
 
+class EvidenceArticle(BaseModel):
+    article_id: str
+    title: str
+    summary: str = ""
+    body_excerpt: str = ""
+    outlet: str = ""
+    country: str = ""
+    language: str | None = None
+    url: str = ""
+    published_at: str | None = None
+
+
 class DigestResponse(BaseModel):
     topic: str
     country: str
@@ -150,6 +167,7 @@ class ClusterSignalRecord(BaseModel):
     member_count: int
     membership_fingerprint: str
     exemplar_article_ids: list[str] = Field(default_factory=list)
+    exemplar_articles: list[EvidenceArticle] = Field(default_factory=list)
     extractor_provider: str
     extractor_model: str
     schema_version: str
@@ -239,6 +257,9 @@ class ClusterDriftObservationResponse(BaseModel):
     dominant_frame: str
     baseline_frame: str | None = None
     frame_shift: bool
+    evidence_json: list[str] = Field(default_factory=list)
+    exemplar_article_ids: list[str] = Field(default_factory=list)
+    exemplar_articles: list[EvidenceArticle] = Field(default_factory=list)
 
 
 class ClusterDriftSegmentResponse(DriftSegmentResponse):
@@ -271,3 +292,80 @@ class ClusterDriftStageResponse(BaseModel):
     segments: int
     computed_at: str
     duration_s: float
+
+
+class ScopeResponse(BaseModel):
+    topic: str
+    country: str = ""
+    source: str = ""
+    language: str | None = None
+
+
+class PipelineStageStatus(BaseModel):
+    status: str
+    detail: str | None = None
+    count: int | None = None
+    duration_s: float | None = None
+    metadata: dict[str, object] = Field(default_factory=dict)
+
+
+class PipelineStageSummary(BaseModel):
+    collect: PipelineStageStatus
+    extract: PipelineStageStatus
+    embed: PipelineStageStatus
+    cluster: PipelineStageStatus
+    cluster_signals: PipelineStageStatus
+    cluster_drift: PipelineStageStatus
+    brief: PipelineStageStatus
+
+
+class PipelineSummaryResponse(BaseModel):
+    article_count: int = 0
+    signal_count: int = 0
+    embedding_count: int = 0
+    cluster_count: int = 0
+    noise_count: int = 0
+    cluster_status: str = "not_run"
+    brief_status: str = "insufficient_data"
+    strongest_segment: str | None = None
+    stages: PipelineStageSummary
+
+
+class PipelineRunResponse(BaseModel):
+    scope: ScopeResponse
+    run_id: str | None = None
+    generated_at: str
+    duration_s: float
+    cluster_status: str
+    brief_status: str
+    pipeline: PipelineSummaryResponse
+    brief: dict[str, object] | None = None
+
+
+class BriefSupportResponse(BaseModel):
+    status: str
+    source_mode: str
+    generation_mode: str | None = None
+    cited_track_ids: list[str] = Field(default_factory=list)
+    cited_article_ids: list[str] = Field(default_factory=list)
+    selected_observation_ids: list[str] = Field(default_factory=list)
+    fallback_note: str | None = None
+
+
+class OutputClusterDriftResponse(BaseModel):
+    status: str
+    message: str
+    data: ClusterDriftResponse | None = None
+
+
+class OutputResponse(BaseModel):
+    scope: ScopeResponse
+    run_id: str | None = None
+    generated_at: str
+    pipeline: PipelineSummaryResponse
+    brief: dict[str, object]
+    digest: DigestResponse
+    cluster_drift: OutputClusterDriftResponse
+    clusters: list[ClusterResponse] = Field(default_factory=list)
+    brief_support: BriefSupportResponse
+    signals: list[SignalRecord] = Field(default_factory=list)

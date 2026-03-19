@@ -145,6 +145,172 @@ def _ensure_cluster_signal_schema(conn: sqlite3.Connection) -> None:
     )
 
 
+def _ensure_cluster_drift_schema(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS cluster_tracks (
+            track_id                   TEXT PRIMARY KEY,
+            topic                      TEXT    NOT NULL,
+            country                    TEXT    NOT NULL DEFAULT '',
+            source                     TEXT    NOT NULL DEFAULT '',
+            language                   TEXT,
+            status                     TEXT    NOT NULL DEFAULT 'active',
+            baseline_topic_label       TEXT    NOT NULL DEFAULT '',
+            baseline_centroid_vector   TEXT    NOT NULL,
+            baseline_centroid_dim      INTEGER NOT NULL DEFAULT 384,
+            concern_level              REAL    NOT NULL,
+            purchase_intent            REAL    NOT NULL,
+            avoidance_signals          REAL    NOT NULL,
+            dominant_frame             TEXT    NOT NULL,
+            seg_young_urban            REAL    NOT NULL,
+            seg_family                 REAL    NOT NULL,
+            seg_senior                 REAL    NOT NULL,
+            seg_b2b                    REAL    NOT NULL,
+            sample_count               INTEGER NOT NULL DEFAULT 0,
+            is_learned                 INTEGER NOT NULL DEFAULT 0,
+            missed_runs                INTEGER NOT NULL DEFAULT 0,
+            last_member_count          INTEGER NOT NULL DEFAULT 0,
+            last_mean_membership_strength REAL NOT NULL DEFAULT 0.0,
+            first_seen_run_id          TEXT    NOT NULL,
+            last_seen_run_id           TEXT    NOT NULL,
+            first_seen_at              TEXT    NOT NULL,
+            last_seen_at               TEXT    NOT NULL,
+            updated_at                 TEXT    NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_cluster_tracks_scope_status
+        ON cluster_tracks(topic, country, source, language, status, last_seen_at DESC)
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS cluster_drift_runs (
+            run_id                     TEXT PRIMARY KEY REFERENCES cluster_runs(run_id),
+            topic                      TEXT    NOT NULL,
+            country                    TEXT    NOT NULL DEFAULT '',
+            source                     TEXT    NOT NULL DEFAULT '',
+            language                   TEXT,
+            observed_cluster_count     INTEGER NOT NULL,
+            matched_track_count        INTEGER NOT NULL,
+            new_track_count            INTEGER NOT NULL,
+            missing_track_count        INTEGER NOT NULL,
+            segment_count              INTEGER NOT NULL,
+            computed_at                TEXT    NOT NULL,
+            duration_s                 REAL    NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_cluster_drift_runs_scope_computed
+        ON cluster_drift_runs(topic, country, source, language, computed_at DESC)
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS cluster_drift_observations (
+            id                         INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id                     TEXT    NOT NULL REFERENCES cluster_drift_runs(run_id),
+            track_id                   TEXT    NOT NULL REFERENCES cluster_tracks(track_id),
+            cluster_id                 INTEGER REFERENCES clusters(id),
+            cluster_label              INTEGER,
+            topic_label                TEXT    NOT NULL DEFAULT '',
+            baseline_topic_label       TEXT    NOT NULL DEFAULT '',
+            match_type                 TEXT    NOT NULL,
+            direction                  TEXT    NOT NULL,
+            centroid_distance          REAL    NOT NULL DEFAULT 0.0,
+            segment_vector_distance    REAL    NOT NULL DEFAULT 0.0,
+            signal_drift               REAL    NOT NULL DEFAULT 0.0,
+            drift_magnitude            REAL    NOT NULL DEFAULT 0.0,
+            alert_level                TEXT    NOT NULL,
+            confidence                 REAL    NOT NULL DEFAULT 0.0,
+            member_count               INTEGER NOT NULL DEFAULT 0,
+            mean_membership_strength   REAL    NOT NULL DEFAULT 0.0,
+            concern_level              REAL    NOT NULL DEFAULT 0.0,
+            purchase_intent            REAL    NOT NULL DEFAULT 0.0,
+            avoidance_signals          REAL    NOT NULL DEFAULT 0.0,
+            dominant_frame             TEXT    NOT NULL DEFAULT 'neutral',
+            baseline_concern_level     REAL,
+            baseline_purchase_intent   REAL,
+            baseline_avoidance_signals REAL,
+            baseline_dominant_frame    TEXT,
+            delta_concern_level        REAL    NOT NULL DEFAULT 0.0,
+            delta_purchase_intent      REAL    NOT NULL DEFAULT 0.0,
+            delta_avoidance_signals    REAL    NOT NULL DEFAULT 0.0,
+            seg_young_urban            REAL    NOT NULL DEFAULT 0.0,
+            seg_family                 REAL    NOT NULL DEFAULT 0.0,
+            seg_senior                 REAL    NOT NULL DEFAULT 0.0,
+            seg_b2b                    REAL    NOT NULL DEFAULT 0.0,
+            baseline_seg_young_urban   REAL    NOT NULL DEFAULT 0.0,
+            baseline_seg_family        REAL    NOT NULL DEFAULT 0.0,
+            baseline_seg_senior        REAL    NOT NULL DEFAULT 0.0,
+            baseline_seg_b2b           REAL    NOT NULL DEFAULT 0.0,
+            frame_shift                INTEGER NOT NULL DEFAULT 0,
+            computed_at                TEXT    NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_cluster_drift_observations_run_id
+        ON cluster_drift_observations(run_id)
+        """
+    )
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_cluster_drift_observations_run_track
+        ON cluster_drift_observations(run_id, track_id)
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS cluster_segment_drifts (
+            id                         INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id                     TEXT    NOT NULL REFERENCES cluster_drift_runs(run_id),
+            segment                    TEXT    NOT NULL,
+            article_count              INTEGER NOT NULL DEFAULT 0,
+            has_data                   INTEGER NOT NULL DEFAULT 0,
+            concern_level              REAL    NOT NULL DEFAULT 0.0,
+            purchase_intent            REAL    NOT NULL DEFAULT 0.0,
+            avoidance_signals          REAL    NOT NULL DEFAULT 0.0,
+            dominant_frame             TEXT    NOT NULL DEFAULT 'neutral',
+            baseline_concern_level     REAL,
+            baseline_purchase_intent   REAL,
+            baseline_avoidance_signals REAL,
+            baseline_dominant_frame    TEXT,
+            delta_concern_level        REAL    NOT NULL DEFAULT 0.0,
+            delta_purchase_intent      REAL    NOT NULL DEFAULT 0.0,
+            delta_avoidance_signals    REAL    NOT NULL DEFAULT 0.0,
+            drift_magnitude            REAL    NOT NULL DEFAULT 0.0,
+            frame_shift                INTEGER NOT NULL DEFAULT 0,
+            alert_level                TEXT    NOT NULL,
+            confidence                 REAL    NOT NULL DEFAULT 0.0,
+            baseline_is_learned        INTEGER NOT NULL DEFAULT 0,
+            baseline_sample_count      INTEGER NOT NULL DEFAULT 0,
+            baseline_age_days          INTEGER,
+            status                     TEXT    NOT NULL,
+            direction                  TEXT    NOT NULL DEFAULT 'stable',
+            centroid_shift             REAL    NOT NULL DEFAULT 0.0,
+            new_cluster_weight         REAL    NOT NULL DEFAULT 0.0,
+            tracked_cluster_count      INTEGER NOT NULL DEFAULT 0,
+            matched_cluster_count      INTEGER NOT NULL DEFAULT 0,
+            new_cluster_count          INTEGER NOT NULL DEFAULT 0,
+            missing_cluster_count      INTEGER NOT NULL DEFAULT 0,
+            computed_at                TEXT    NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_cluster_segment_drifts_run_segment
+        ON cluster_segment_drifts(run_id, segment)
+        """
+    )
+
+
 def run_migrations(conn: sqlite3.Connection) -> None:
     """Apply idempotent schema migrations for existing databases."""
     table_names = {
@@ -298,8 +464,11 @@ def run_migrations(conn: sqlite3.Connection) -> None:
         )
         _ensure_cluster_schema(conn)
         _ensure_cluster_signal_schema(conn)
+        _ensure_cluster_drift_schema(conn)
     elif "cluster_signals" not in table_names:
         _ensure_cluster_signal_schema(conn)
+    elif "cluster_drift_runs" not in table_names:
+        _ensure_cluster_drift_schema(conn)
 
 
 def get_conn() -> sqlite3.Connection:
@@ -462,6 +631,7 @@ def get_conn() -> sqlite3.Connection:
         )
         _ensure_cluster_schema(conn)
         _ensure_cluster_signal_schema(conn)
+        _ensure_cluster_drift_schema(conn)
         run_migrations(conn)
         conn.commit()
         _local.conn = conn

@@ -167,6 +167,9 @@ class ClusterSignalStageResponse(BaseModel):
     duration_s: float
 
 
+ClusterDriftMatchType = Literal["matched", "new", "missing"]
+
+
 class ClusterMember(BaseModel):
     article_id: str
     embedding_id: int
@@ -212,3 +215,59 @@ class LatestClusterRunResponse(ClusterRunMetadata):
     created_at: str
     clusters: list[ClusterResponse] = Field(default_factory=list)
     noise_members: list[ClusterMember] = Field(default_factory=list)
+
+
+class ClusterDriftObservationResponse(BaseModel):
+    track_id: str
+    cluster_id: int | None = None
+    cluster_label: int | None = None
+    topic_label: str
+    baseline_topic_label: str
+    match_type: ClusterDriftMatchType
+    direction: str
+    centroid_distance: float
+    segment_vector_distance: float
+    signal_drift: float
+    drift_magnitude: float
+    alert_level: str
+    confidence: float
+    member_count: int
+    mean_membership_strength: float
+    current: dict[str, float]
+    baseline: dict[str, float] | None = None
+    deltas: dict[str, float]
+    dominant_frame: str
+    baseline_frame: str | None = None
+    frame_shift: bool
+
+
+class ClusterDriftSegmentResponse(DriftSegmentResponse):
+    direction: str
+    centroid_shift: float
+    new_cluster_weight: float
+    tracked_cluster_count: int
+    matched_cluster_count: int
+    new_cluster_count: int
+    missing_cluster_count: int
+
+
+class ClusterDriftResponse(BaseModel):
+    topic: str
+    country: str
+    source: str
+    language: str | None = None
+    run_id: str
+    computed_at: str
+    segments: list[ClusterDriftSegmentResponse] = Field(default_factory=list)
+    clusters: list[ClusterDriftObservationResponse] = Field(default_factory=list)
+
+
+class ClusterDriftStageResponse(BaseModel):
+    run_id: str
+    observed_clusters: int
+    matched_tracks: int
+    new_tracks: int
+    missing_tracks: int
+    segments: int
+    computed_at: str
+    duration_s: float

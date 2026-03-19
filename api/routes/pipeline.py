@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException
 
 from api.models import (
+    ClusterDriftStageResponse,
     ClusterRunResponse,
     ClusterSignalStageResponse,
     EmbeddingStageResponse,
@@ -10,6 +11,7 @@ from api.pipeline import run_collection_cycle
 from brief.generator import generate_brief_cached
 from brief.models import ResearchBrief
 from clustering.clustering_service import get_latest_cluster_run, run_clustering
+from delta.cluster_drift import run_cluster_drift
 from extraction.cluster_extractor import run_cluster_extraction
 from extraction.embedding_service import embed_pending_articles
 
@@ -88,6 +90,18 @@ def run_cluster_signal_stage(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/pipeline/cluster/drift", response_model=ClusterDriftStageResponse)
+def run_cluster_drift_stage(run_id: str) -> dict[str, object]:
+    try:
+        return run_cluster_drift(run_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.get("/pipeline/clusters/latest", response_model=LatestClusterRunResponse)

@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException
 
-from api.models import CalibrationResponse, DriftResponse
+from api.models import CalibrationResponse, ClusterDriftResponse, DriftResponse
+from delta.cluster_drift import get_latest_cluster_drift
 from delta.engine import compute_drift
 from delta.mapper import SEGMENTS, compute_segment_profiles
 
@@ -26,6 +27,27 @@ def get_calibration(topic: str, segment: str) -> dict:
     if drift_match is None:
         return match
     return {**match, **drift_match}
+
+
+@router.get("/drift/clusters/{topic}", response_model=ClusterDriftResponse)
+def get_cluster_drift_view(
+    topic: str,
+    country: str = "",
+    source: str = "",
+    language: str | None = None,
+) -> dict:
+    result = get_latest_cluster_drift(
+        topic=topic,
+        country=country,
+        source=source,
+        language=language,
+    )
+    if result is None:
+        raise HTTPException(
+            status_code=404,
+            detail="No cluster drift run found for the requested scope.",
+        )
+    return result
 
 
 @router.get("/drift/{topic}", response_model=DriftResponse)

@@ -1,6 +1,28 @@
 # SigDriftr: Known Limitations & Future Roadmap
 
 ## Current Limitations
+1)
+The new embedding endpoint accepts any integer limit, including zero/negative values, and forwards it directly to SQL LIMIT without validation. In SQLite, a negative limit can effectively remove the limit, which can trigger unexpectedly large embedding runs and heavy model work from one API call.
+
+Endpoint parameter: api/routes/pipeline.py
+Forwarding to SQL: extraction/embedding_service.py
+
+2)
+“Latest run” lookup with no language filter only returns runs where language IS NULL, not “any language”.
+If a caller omits language, they may expect latest run across all languages for the scope. Current SQL explicitly restricts to NULL-language runs in that case.
+Relevant code:
+clustering/clustering_service.py
+
+3)
+Invalid user inputs currently become internal server errors instead of clean client validation errors.
+The clustering service raises ValueError for empty topic or window_hours < 1, but the API route passes these directly and does not translate them to 4xx responses. That means malformed requests can return 500.
+Relevant code:
+api/routes/pipeline.py
+clustering/clustering_service.py
+clustering/clustering_service.py
+
+4)
+Add more different signals, eg. controversy, excitement, ...
 
 ### Scalability
 

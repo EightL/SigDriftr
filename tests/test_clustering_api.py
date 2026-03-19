@@ -87,6 +87,33 @@ def test_pipeline_cluster_signal_route_passes_args_through() -> None:
     )
 
 
+def test_pipeline_cluster_drift_route_passes_args_through() -> None:
+    pytest.importorskip("fastapi")
+    from api.models import ClusterDriftStageResponse
+    from api.routes import pipeline as pipeline_route
+
+    payload = {
+        "run_id": "run-drift-1",
+        "observed_clusters": 3,
+        "matched_tracks": 2,
+        "new_tracks": 1,
+        "missing_tracks": 0,
+        "segments": 4,
+        "computed_at": "2026-03-19T09:30:00+00:00",
+        "duration_s": 0.37,
+    }
+
+    with patch(
+        "api.routes.pipeline.run_cluster_drift",
+        return_value=payload,
+    ) as mock_drift:
+        result = pipeline_route.run_cluster_drift_stage(run_id="run-drift-1")
+
+    validated = ClusterDriftStageResponse.model_validate(result)
+    assert validated.matched_tracks == 2
+    mock_drift.assert_called_once_with("run-drift-1")
+
+
 def test_pipeline_latest_clusters_route_passes_scope_filters_through() -> None:
     pytest.importorskip("fastapi")
     from api.models import LatestClusterRunResponse
@@ -184,6 +211,125 @@ def test_pipeline_latest_clusters_route_passes_scope_filters_through() -> None:
     )
 
 
+def test_cluster_drift_route_passes_scope_filters_through() -> None:
+    pytest.importorskip("fastapi")
+    from api.models import ClusterDriftResponse
+    from api.routes import calibration as calibration_route
+
+    payload = {
+        "topic": "inflace",
+        "country": "DE",
+        "source": "spiegel",
+        "language": "de",
+        "run_id": "run-drift-2",
+        "computed_at": "2026-03-19T09:30:00+00:00",
+        "segments": [
+            {
+                "segment": "young_urban",
+                "topic": "inflace",
+                "article_count": 8,
+                "has_data": True,
+                "current": {
+                    "concern_level": 0.7,
+                    "purchase_intent": 0.2,
+                    "avoidance_signals": 0.3,
+                },
+                "baseline": {
+                    "concern_level": 0.6,
+                    "purchase_intent": 0.3,
+                    "avoidance_signals": 0.25,
+                },
+                "deltas": {
+                    "concern_level": 0.1,
+                    "purchase_intent": -0.1,
+                    "avoidance_signals": 0.05,
+                },
+                "drift_magnitude": 0.18,
+                "frame_shift": False,
+                "alert_level": "none",
+                "dominant_frame": "fear",
+                "baseline_frame": "fear",
+                "confidence": 0.55,
+                "baseline_is_learned": True,
+                "baseline_sample_count": 31,
+                "baseline_age_days": 1,
+                "status": "ready",
+                "domain": "commerce",
+                "relevant_fields": [
+                    "concern_level",
+                    "purchase_intent",
+                    "avoidance_signals",
+                ],
+                "direction": "rising",
+                "centroid_shift": 0.11,
+                "new_cluster_weight": 0.25,
+                "tracked_cluster_count": 2,
+                "matched_cluster_count": 1,
+                "new_cluster_count": 1,
+                "missing_cluster_count": 0,
+            }
+        ],
+        "clusters": [
+            {
+                "track_id": "track-1",
+                "cluster_id": 10,
+                "cluster_label": 0,
+                "topic_label": "Inflation cluster",
+                "baseline_topic_label": "Inflation cluster",
+                "match_type": "matched",
+                "direction": "rising",
+                "centroid_distance": 0.12,
+                "segment_vector_distance": 0.08,
+                "signal_drift": 0.16,
+                "drift_magnitude": 0.15,
+                "alert_level": "none",
+                "confidence": 0.6,
+                "member_count": 4,
+                "mean_membership_strength": 0.95,
+                "current": {
+                    "concern_level": 0.7,
+                    "purchase_intent": 0.2,
+                    "avoidance_signals": 0.3,
+                },
+                "baseline": {
+                    "concern_level": 0.6,
+                    "purchase_intent": 0.3,
+                    "avoidance_signals": 0.25,
+                },
+                "deltas": {
+                    "concern_level": 0.1,
+                    "purchase_intent": -0.1,
+                    "avoidance_signals": 0.05,
+                },
+                "dominant_frame": "fear",
+                "baseline_frame": "fear",
+                "frame_shift": False,
+            }
+        ],
+    }
+
+    with patch(
+        "api.routes.calibration.get_latest_cluster_drift",
+        return_value=payload,
+    ) as mock_latest:
+        result = calibration_route.get_cluster_drift_view(
+            topic="inflace",
+            country="DE",
+            source="spiegel",
+            language="de",
+        )
+
+    validated = ClusterDriftResponse.model_validate(result)
+    assert validated.run_id == "run-drift-2"
+    assert validated.segments[0].direction == "rising"
+    mock_latest.assert_called_once_with(
+        topic="inflace",
+        country="DE",
+        source="spiegel",
+        language="de",
+    )
+
+
 def test_pipeline_latest_clusters_route_raises_404_when_scope_missing() -> None:
     pytest.importorskip("fastapi")
     from fastapi import HTTPException
@@ -192,5 +338,17 @@ def test_pipeline_latest_clusters_route_raises_404_when_scope_missing() -> None:
     with patch("api.routes.pipeline.get_latest_cluster_run", return_value=None):
         with pytest.raises(HTTPException) as exc_info:
             pipeline_route.get_latest_clusters(topic="inflace")
+
+    assert exc_info.value.status_code == 404
+
+
+def test_cluster_drift_route_raises_404_when_scope_missing() -> None:
+    pytest.importorskip("fastapi")
+    from fastapi import HTTPException
+    from api.routes import calibration as calibration_route
+
+    with patch("api.routes.calibration.get_latest_cluster_drift", return_value=None):
+        with pytest.raises(HTTPException) as exc_info:
+            calibration_route.get_cluster_drift_view(topic="inflace")
 
     assert exc_info.value.status_code == 404

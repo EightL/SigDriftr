@@ -11,6 +11,103 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 _local = threading.local()
 
 
+def _ensure_cluster_schema(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS cluster_runs (
+            id                        INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id                    TEXT    NOT NULL UNIQUE,
+            topic                     TEXT    NOT NULL,
+            country                   TEXT    NOT NULL DEFAULT '',
+            source                    TEXT    NOT NULL DEFAULT '',
+            language                  TEXT,
+            window_start              TEXT    NOT NULL,
+            window_end                TEXT    NOT NULL,
+            status                    TEXT    NOT NULL,
+            n_articles                INTEGER NOT NULL,
+            n_clusters                INTEGER NOT NULL,
+            n_noise                   INTEGER NOT NULL,
+            umap_n_components         INTEGER NOT NULL DEFAULT 10,
+            umap_n_neighbors          INTEGER NOT NULL DEFAULT 15,
+            hdbscan_min_cluster_size  INTEGER NOT NULL DEFAULT 3,
+            hdbscan_min_samples       INTEGER NOT NULL DEFAULT 2,
+            model_name                TEXT    NOT NULL,
+            model_version             TEXT,
+            created_at                TEXT    NOT NULL DEFAULT (datetime('now'))
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_cluster_runs_scope_created
+        ON cluster_runs(topic, country, source, language, created_at DESC)
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS clusters (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id          TEXT    NOT NULL REFERENCES cluster_runs(run_id),
+            cluster_label   INTEGER NOT NULL,
+            size            INTEGER NOT NULL,
+            centroid_vector TEXT    NOT NULL,
+            centroid_dim    INTEGER NOT NULL DEFAULT 384,
+            created_at      TEXT    NOT NULL DEFAULT (datetime('now'))
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_clusters_run_id
+        ON clusters(run_id)
+        """
+    )
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_clusters_run_label
+        ON clusters(run_id, cluster_label)
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS cluster_memberships (
+            id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id              TEXT    NOT NULL REFERENCES cluster_runs(run_id),
+            cluster_id          INTEGER REFERENCES clusters(id),
+            article_id          TEXT    NOT NULL REFERENCES articles(id),
+            embedding_id        INTEGER NOT NULL REFERENCES article_embeddings(id),
+            membership_strength REAL,
+            is_noise            INTEGER NOT NULL DEFAULT 0,
+            created_at          TEXT    NOT NULL DEFAULT (datetime('now'))
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_cm_run_id
+        ON cluster_memberships(run_id)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_cm_article
+        ON cluster_memberships(article_id)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_cm_cluster
+        ON cluster_memberships(cluster_id)
+        """
+    )
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_cm_run_article_unique
+        ON cluster_memberships(run_id, article_id)
+        """
+    )
+
+
 def run_migrations(conn: sqlite3.Connection) -> None:
     """Apply idempotent schema migrations for existing databases."""
     table_names = {
@@ -162,6 +259,7 @@ def run_migrations(conn: sqlite3.Connection) -> None:
             ON article_embeddings(model_name, status, updated_at)
             """
         )
+        _ensure_cluster_schema(conn)
 
 
 def get_conn() -> sqlite3.Connection:
@@ -322,6 +420,7 @@ def get_conn() -> sqlite3.Connection:
             ON article_embeddings(model_name, status, updated_at)
             """
         )
+        _ensure_cluster_schema(conn)
         run_migrations(conn)
         conn.commit()
         _local.conn = conn

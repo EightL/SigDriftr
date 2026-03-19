@@ -128,3 +128,52 @@ class EmbeddingStageResponse(BaseModel):
     stale_reembedded: int
     failed: int
     duration_s: float
+
+
+ClusterRunStatus = Literal["completed", "all_noise", "skipped_small_sample"]
+
+
+class ClusterMember(BaseModel):
+    article_id: str
+    embedding_id: int
+    membership_strength: float | None = None
+    is_noise: bool
+
+
+class ClusterResponse(BaseModel):
+    cluster_id: int
+    cluster_label: int
+    size: int
+    centroid_vector: list[float]
+    centroid_dim: int
+    members: list[ClusterMember] = Field(default_factory=list)
+
+
+class ClusterRunMetadata(BaseModel):
+    run_id: str
+    topic: str
+    country: str
+    source: str
+    language: str | None = None
+    window_start: str
+    window_end: str
+    status: ClusterRunStatus
+    n_articles: int
+    n_clusters: int
+    n_noise: int
+    model_name: str
+    model_version: str | None = None
+    umap_n_components: int
+    umap_n_neighbors: int
+    hdbscan_min_cluster_size: int
+    hdbscan_min_samples: int
+
+
+class ClusterRunResponse(ClusterRunMetadata):
+    duration_s: float
+
+
+class LatestClusterRunResponse(ClusterRunMetadata):
+    created_at: str
+    clusters: list[ClusterResponse] = Field(default_factory=list)
+    noise_members: list[ClusterMember] = Field(default_factory=list)

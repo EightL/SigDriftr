@@ -9,3 +9,6 @@ torch
 aiofiles
 apscheduler>=3.10,<4.0
 syntok
+numpy>=1.26
+umap-learn>=0.5.6
+hdbscan>=0.8.33

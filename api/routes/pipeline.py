@@ -1,9 +1,14 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 
-from api.models import EmbeddingStageResponse
+from api.models import (
+    ClusterRunResponse,
+    EmbeddingStageResponse,
+    LatestClusterRunResponse,
+)
 from api.pipeline import run_collection_cycle
 from brief.generator import generate_brief_cached
 from brief.models import ResearchBrief
+from clustering.clustering_service import get_latest_cluster_run, run_clustering
 from extraction.embedding_service import embed_pending_articles
 
 
@@ -44,3 +49,43 @@ def run_embedding_stage(
         country=country,
         source=source,
     )
+
+
+@router.post("/pipeline/cluster", response_model=ClusterRunResponse)
+def run_cluster_stage(
+    topic: str,
+    country: str = "",
+    source: str = "",
+    language: str | None = None,
+    window_hours: int = 24,
+    min_cluster_size: int = 3,
+) -> dict[str, object]:
+    return run_clustering(
+        topic=topic,
+        country=country,
+        source=source,
+        language=language,
+        window_hours=window_hours,
+        min_cluster_size=min_cluster_size,
+    )
+
+
+@router.get("/pipeline/clusters/latest", response_model=LatestClusterRunResponse)
+def get_latest_clusters(
+    topic: str,
+    country: str = "",
+    source: str = "",
+    language: str | None = None,
+) -> dict[str, object]:
+    result = get_latest_cluster_run(
+        topic=topic,
+        country=country,
+        source=source,
+        language=language,
+    )
+    if result is None:
+        raise HTTPException(
+            status_code=404,
+            detail="No cluster run found for the requested scope.",
+        )
+    return result

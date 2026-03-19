@@ -225,6 +225,8 @@ def select_feeds(
     active_feeds = list(feeds or FEEDS)
     if not active_feeds:
         return []
+    if len(active_feeds) <= max(1, k):
+        return active_feeds
 
     scored = [score_feed(topic, feed, now) for feed in active_feeds]
     # Order selected arms as:

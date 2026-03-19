@@ -2,6 +2,7 @@ import json
 from datetime import datetime, timezone
 
 from config.feeds import FEEDS
+from db.queries import topic_filter_sql
 from db.init import get_conn
 from extraction.entities import extract_entities, normalize_entity_key
 from extraction.llm_client import extract_signals
@@ -13,15 +14,16 @@ _OUTLET_FEEDS = {feed["outlet"]: feed for feed in FEEDS}
 
 def run_extraction(topic: str, record_bandit_reward: bool = True) -> int:
     conn = get_conn()
+    topic_sql, topic_params = topic_filter_sql("a", topic)
     rows = conn.execute(
-        """
+        f"""
         SELECT a.id, a.title, a.summary, a.outlet, a.topic, a.published_at
         FROM articles a
         LEFT JOIN signals s ON a.id = s.article_id
         WHERE s.article_id IS NULL
-          AND (a.topic = ? OR ? = '')
+          {topic_sql}
         """,
-        (topic, topic),
+        topic_params,
     ).fetchall()
 
     processed = 0

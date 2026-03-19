@@ -305,14 +305,20 @@ def reset_bandit_state() -> None:
 def warm_start_from_history(topic: str = "", limit: int | None = None) -> int:
     conn = get_conn()
     query = """
-        SELECT a.outlet, a.topic, a.published_at, s.raw_json,
-               s.concern_level, s.purchase_intent, s.avoidance_signals
+        SELECT a.outlet,
+               COALESCE(at.topic, a.topic, '') AS effective_topic,
+               a.published_at,
+               s.raw_json,
+               s.concern_level,
+               s.purchase_intent,
+               s.avoidance_signals
         FROM signals s
         JOIN articles a ON a.id = s.article_id
-        WHERE (? = '' OR a.topic = ?)
+        LEFT JOIN article_topics at ON at.article_id = a.id AND (? != '' AND at.topic = ?)
+        WHERE (? = '' OR at.topic = ?)
         ORDER BY s.extracted_at ASC, s.article_id ASC
     """
-    params: list[object] = [topic, topic]
+    params: list[object] = [topic, topic, topic, topic]
     if limit is not None:
         query += " LIMIT ?"
         params.append(limit)

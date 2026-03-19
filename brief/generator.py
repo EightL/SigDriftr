@@ -13,6 +13,7 @@ from brief.prompt import (
     confidence_label,
 )
 from config.settings import MIN_BRIEF_CONFIDENCE
+from db.queries import topic_filter_sql
 from db.init import get_conn
 from delta.engine import compute_drift
 from pydantic import ValidationError
@@ -108,16 +109,15 @@ def _get_top_articles(topic: str, segment: str, limit: int = 2) -> list[dict]:
     """Fetch recent high-signal articles for a topic and segment."""
     conn = get_conn()
     seg_col = f"s.seg_{segment}"
+    topic_sql, topic_params = topic_filter_sql("a", topic)
     query = f"""
         SELECT s.article_id, a.title, a.summary, {seg_col} AS relevance, s.extracted_at
         FROM signals s
         JOIN articles a ON s.article_id = a.id
         WHERE {seg_col} > 0.3
+        {topic_sql}
     """
-    params: list[object] = []
-    if topic:
-        query += " AND a.topic = ?"
-        params.append(topic)
+    params: list[object] = list(topic_params)
     query += " ORDER BY s.extracted_at DESC, relevance DESC LIMIT ?"
     params.append(limit)
 

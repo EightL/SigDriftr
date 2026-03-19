@@ -15,6 +15,7 @@ from api.routes.health import router as health_router
 from api.routes.history import router as history_router
 from api.routes.pipeline import router as pipeline_router
 from api.routes.signals import router as signals_router
+from api.routes.summaries import router as summaries_router
 from api.scheduler import start_scheduler, stop_scheduler
 from delta.seeder import seed_baselines
 
@@ -42,6 +43,7 @@ app.include_router(history_router, prefix="")
 app.include_router(brief_router, prefix="")
 app.include_router(health_router, prefix="")
 app.include_router(pipeline_router, prefix="")
+app.include_router(summaries_router, prefix="")
 app.mount(
     "/ui",
     StaticFiles(directory=Path(__file__).parent / "static", html=True),

@@ -152,8 +152,10 @@ def test_run_collection_cycle_chains_extract_and_rewards() -> None:
         "extracted": 2,
         "rewards_recorded": 2,
         "topic": "inflace",
+        "country": "",
+        "source": "",
     }
-    mock_crawl.assert_awaited_once_with("inflace")
+    mock_crawl.assert_awaited_once_with("inflace", country="", source="")
     stub_extractor.run_extraction.assert_called_once_with(
         "inflace",
         record_bandit_reward=False,
@@ -176,8 +178,10 @@ def test_run_collection_cycle_skips_extract_when_no_articles_are_inserted() -> N
         "extracted": 0,
         "rewards_recorded": 0,
         "topic": "inflace",
+        "country": "",
+        "source": "",
     }
-    mock_crawl.assert_awaited_once_with("inflace")
+    mock_crawl.assert_awaited_once_with("inflace", country="", source="")
     mock_rewards.assert_not_called()
 
 

@@ -5,6 +5,7 @@ from fastapi import APIRouter, BackgroundTasks
 from api.models import SignalRecord
 from brief.generator import clear_brief_cache
 from config.domains import get_domain_config
+from db.queries import topic_filter_sql
 from db.init import get_conn
 from delta.engine import compute_drift
 from delta.mapper import compute_segment_profiles
@@ -39,17 +40,28 @@ def get_signals(
         }
         for entry in drift
     }
+    topic_sql, topic_params = topic_filter_sql("a", topic)
     rows = conn.execute(
-        """
-        SELECT a.topic, s.article_id, s.concern_level, s.purchase_intent,
+        f"""
+        SELECT COALESCE(
+                   (SELECT at.topic
+                    FROM article_topics at
+                    WHERE at.article_id = a.id
+                    ORDER BY at.matched_at DESC
+                    LIMIT 1),
+                   a.topic,
+                   ''
+               ) AS effective_topic,
+               s.article_id, s.concern_level, s.purchase_intent,
                s.avoidance_signals, s.dominant_frame, s.seg_young_urban,
                s.seg_family, s.seg_senior, s.seg_b2b, s.raw_json, s.extracted_at
         FROM signals s
         JOIN articles a ON a.id = s.article_id
-        WHERE (a.topic = ? OR ? = '')
+        WHERE 1 = 1
+          {topic_sql}
         ORDER BY s.extracted_at DESC, s.article_id DESC
         """,
-        (topic, topic),
+        topic_params,
     ).fetchall()
 
     records: list[dict] = []

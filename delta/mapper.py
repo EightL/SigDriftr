@@ -1,6 +1,7 @@
 import hashlib
 from datetime import datetime, timedelta, timezone
 
+from db.queries import topic_filter_sql
 from db.init import get_conn
 
 
@@ -60,9 +61,9 @@ def compute_segment_profiles(
         WHERE s.extracted_at >= ?
     """
     params: list[str] = [since]
-    if topic:
-        query += " AND a.topic = ?"
-        params.append(topic)
+    topic_sql, topic_params = topic_filter_sql("a", topic)
+    query += topic_sql
+    params.extend(str(item) for item in topic_params)
 
     rows = conn.execute(query, params).fetchall()
 

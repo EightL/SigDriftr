@@ -93,3 +93,26 @@ class HistorySegmentResponse(BaseModel):
     purchase_intent: list[float]
     avoidance: list[float]
     drift_magnitude: list[float]
+
+
+class DigestArticle(BaseModel):
+    article_id: str
+    title: str
+    url: str
+    outlet: str
+    country: str
+    published_at: str | None = None
+    relevance_score: float
+
+
+class DigestResponse(BaseModel):
+    topic: str
+    country: str
+    source: str
+    article_count: int
+    generated_at: str
+    sources_used: list[str]
+    summary_headline: str
+    summary_text: str
+    key_points: list[str]
+    articles: list[DigestArticle]

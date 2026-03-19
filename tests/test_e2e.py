@@ -144,6 +144,9 @@ def test_end_to_end_pipeline_produces_brief_and_bandit_updates() -> None:
             "ingestion.crawler._fetch_feed_bytes",
             return_value=rss_payload,
         ), patch(
+            "ingestion.crawler._fetch_article_body",
+            side_effect=lambda url, fallback_summary: (fallback_summary, url),
+        ), patch(
             "ingestion.crawler.feedparser.parse",
             return_value=parsed_feed,
         ), patch(

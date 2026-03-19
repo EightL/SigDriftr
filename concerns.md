@@ -1,0 +1,1 @@
+- in RSS, some links have like /sport -> we could use that as a signal/weight for clustering? But then we wanna do normal scraping which it doesnt have it so not sure if worth

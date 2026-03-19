@@ -171,7 +171,7 @@ def test_collect_route_runs_collection_cycle() -> None:
             "rewards_recorded": 3,
             "topic": "inflace",
         }
-        mock_collect.assert_awaited_once_with("inflace")
+        mock_collect.assert_awaited_once_with("inflace", country="", source="")
 
     asyncio.run(run_test())
 
@@ -250,7 +250,7 @@ def test_pipeline_route_returns_brief_summary() -> None:
                 "b2b": 0.3,
             },
         }
-        mock_collect.assert_awaited_once_with("inflace")
+        mock_collect.assert_awaited_once_with("inflace", country="", source="")
         mock_brief.assert_called_once_with("inflace")
 
     asyncio.run(run_test())

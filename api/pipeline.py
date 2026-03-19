@@ -32,18 +32,32 @@ def _decode_reward_signals(
 
 def record_recent_signal_rewards(topic: str, crawl_start: str) -> int:
     conn = get_conn()
-    rows = conn.execute(
-        """
-        SELECT a.outlet, a.topic, a.published_at,
-               s.concern_level, s.purchase_intent, s.avoidance_signals, s.raw_json
-        FROM signals s
-        JOIN articles a ON a.id = s.article_id
-        WHERE (a.topic = ? OR ? = '')
-          AND a.fetched_at >= ?
-        ORDER BY s.extracted_at ASC, s.article_id ASC
-        """,
-        (topic, topic, crawl_start),
-    ).fetchall()
+    if topic:
+        rows = conn.execute(
+            """
+            SELECT a.outlet, at.topic, a.published_at,
+                   s.concern_level, s.purchase_intent, s.avoidance_signals, s.raw_json
+            FROM signals s
+            JOIN articles a ON a.id = s.article_id
+            JOIN article_topics at ON at.article_id = a.id
+            WHERE at.topic = ?
+              AND at.matched_at >= ?
+            ORDER BY at.matched_at ASC, s.article_id ASC
+            """,
+            (topic, crawl_start),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            """
+            SELECT a.outlet, COALESCE(a.topic, ''), a.published_at,
+                   s.concern_level, s.purchase_intent, s.avoidance_signals, s.raw_json
+            FROM signals s
+            JOIN articles a ON a.id = s.article_id
+            WHERE a.fetched_at >= ?
+            ORDER BY s.extracted_at ASC, s.article_id ASC
+            """,
+            (crawl_start,),
+        ).fetchall()
 
     rewards_recorded = 0
     for (
@@ -72,9 +86,13 @@ def record_recent_signal_rewards(topic: str, crawl_start: str) -> int:
     return rewards_recorded
 
 
-async def run_collection_cycle(topic: str) -> dict[str, int | str]:
+async def run_collection_cycle(
+    topic: str,
+    country: str = "",
+    source: str = "",
+) -> dict[str, int | str]:
     crawl_start = datetime.now(timezone.utc).isoformat()
-    inserted = await _crawl_async(topic)
+    inserted = await _crawl_async(topic, country=country, source=source)
     processed = 0
     rewards_recorded = 0
 
@@ -93,16 +111,22 @@ async def run_collection_cycle(topic: str) -> dict[str, int | str]:
         "extracted": processed,
         "rewards_recorded": rewards_recorded,
         "topic": topic,
+        "country": country,
+        "source": source,
     }
 
 
-def run_collection_cycle_sync(topic: str) -> dict[str, int | str]:
+def run_collection_cycle_sync(
+    topic: str,
+    country: str = "",
+    source: str = "",
+) -> dict[str, int | str]:
     try:
         asyncio.get_running_loop()
     except RuntimeError:
-        return asyncio.run(run_collection_cycle(topic))
+        return asyncio.run(run_collection_cycle(topic, country=country, source=source))
 
     raise RuntimeError(
         "run_collection_cycle_sync() cannot run inside an active event loop; "
-        "await run_collection_cycle(topic) instead."
+        "await run_collection_cycle(topic, country=..., source=...) instead."
     )

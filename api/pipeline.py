@@ -336,46 +336,116 @@ async def run_full_pipeline(
     embed_duration = round(time.perf_counter() - embed_started, 4)
 
     cluster_started = time.perf_counter()
-    cluster_result = run_clustering(
-        topic=topic,
-        country=normalized_country,
-        source=normalized_source,
-        language=normalized_language,
-        window_hours=window_hours,
-        min_cluster_size=min_cluster_size,
-    )
+    cluster_error_detail: str | None = None
+    try:
+        cluster_result = run_clustering(
+            topic=topic,
+            country=normalized_country,
+            source=normalized_source,
+            language=normalized_language,
+            window_hours=window_hours,
+            min_cluster_size=min_cluster_size,
+        )
+    except ModuleNotFoundError as exc:
+        cluster_error_detail = (
+            f"Clustering dependencies are unavailable in this environment ({exc.name}). "
+            "Install stage-3 dependencies and rerun to enable storyline grouping."
+        )
+        cluster_result = {
+            "run_id": None,
+            "topic": topic,
+            "country": normalized_country,
+            "source": normalized_source,
+            "language": normalized_language,
+            "window_start": None,
+            "window_end": None,
+            "status": "dependency_missing",
+            "n_articles": counts["article_count"] if "counts" in locals() else 0,
+            "n_clusters": 0,
+            "n_noise": 0,
+            "model_name": None,
+            "model_version": None,
+            "umap_n_components": 0,
+            "umap_n_neighbors": 0,
+            "hdbscan_min_cluster_size": min_cluster_size,
+            "hdbscan_min_samples": 0,
+            "duration_s": 0.0,
+        }
+    except Exception as exc:
+        cluster_error_detail = f"Clustering failed: {exc}"
+        cluster_result = {
+            "run_id": None,
+            "topic": topic,
+            "country": normalized_country,
+            "source": normalized_source,
+            "language": normalized_language,
+            "window_start": None,
+            "window_end": None,
+            "status": "failed",
+            "n_articles": 0,
+            "n_clusters": 0,
+            "n_noise": 0,
+            "model_name": None,
+            "model_version": None,
+            "umap_n_components": 0,
+            "umap_n_neighbors": 0,
+            "hdbscan_min_cluster_size": min_cluster_size,
+            "hdbscan_min_samples": 0,
+            "duration_s": 0.0,
+        }
     cluster_duration = round(time.perf_counter() - cluster_started, 4)
 
     cluster_signal_result: dict[str, object] | None = None
     cluster_drift_result: dict[str, object] | None = None
+    cluster_signal_error_detail: str | None = None
+    cluster_drift_error_detail: str | None = None
 
     if (
         str(cluster_result.get("status", "")) == "completed"
         and int(cluster_result.get("n_clusters", 0) or 0) > 0
     ):
         signal_started = time.perf_counter()
-        cluster_signal_result = run_cluster_extraction(
-            run_id=str(cluster_result["run_id"]),
-            overwrite=False,
-            min_cluster_size=min_cluster_size,
-        )
-        cluster_signal_result["duration_s"] = round(
-            time.perf_counter() - signal_started,
-            4,
-        )
-        completed_cluster_signals = int(cluster_signal_result.get("processed", 0) or 0) + int(
-            cluster_signal_result.get("skipped_existing", 0) or 0
-        )
+        try:
+            cluster_signal_result = run_cluster_extraction(
+                run_id=str(cluster_result["run_id"]),
+                overwrite=False,
+                min_cluster_size=min_cluster_size,
+            )
+            cluster_signal_result["duration_s"] = round(
+                time.perf_counter() - signal_started,
+                4,
+            )
+            completed_cluster_signals = int(cluster_signal_result.get("processed", 0) or 0) + int(
+                cluster_signal_result.get("skipped_existing", 0) or 0
+            )
+        except Exception as exc:
+            cluster_signal_error_detail = f"Cluster signal extraction failed: {exc}"
+            cluster_signal_result = {
+                "run_id": str(cluster_result["run_id"]),
+                "selected_clusters": int(cluster_result.get("n_clusters", 0) or 0),
+                "processed": 0,
+                "skipped_existing": 0,
+                "failed": int(cluster_result.get("n_clusters", 0) or 0),
+                "provider": "",
+                "model_name": "",
+                "duration_s": round(time.perf_counter() - signal_started, 4),
+            }
+            completed_cluster_signals = 0
         if (
-            int(cluster_signal_result.get("failed", 0) or 0) == 0
+            cluster_signal_error_detail is None
+            and int(cluster_signal_result.get("failed", 0) or 0) == 0
             and completed_cluster_signals >= int(cluster_result.get("n_clusters", 0) or 0)
         ):
             drift_started = time.perf_counter()
-            cluster_drift_result = run_cluster_drift(str(cluster_result["run_id"]))
-            cluster_drift_result["duration_s"] = round(
-                time.perf_counter() - drift_started,
-                4,
-            )
+            try:
+                cluster_drift_result = run_cluster_drift(str(cluster_result["run_id"]))
+                cluster_drift_result["duration_s"] = round(
+                    time.perf_counter() - drift_started,
+                    4,
+                )
+            except Exception as exc:
+                cluster_drift_error_detail = f"Cluster drift failed: {exc}"
+                cluster_drift_result = None
 
     if cluster_drift_result is not None:
         brief = generate_hierarchical_brief_cached(
@@ -411,7 +481,8 @@ async def run_full_pipeline(
     if cluster_signal_result is None:
         cluster_signal_stage = _stage_status(
             "skipped",
-            detail="Cluster signals were skipped because clustering did not produce stable groups.",
+            detail=cluster_error_detail
+            or "Cluster signals were skipped because clustering did not produce stable groups.",
             count=0,
         )
     else:
@@ -419,7 +490,11 @@ async def run_full_pipeline(
         processed = int(cluster_signal_result.get("processed", 0) or 0)
         cluster_signal_stage = _stage_status(
             "completed" if failed == 0 else ("partial" if processed > 0 else "failed"),
-            detail="Cluster signal extraction completed." if failed == 0 else "Some clusters failed signal extraction.",
+            detail=(
+                "Cluster signal extraction completed."
+                if failed == 0
+                else (cluster_signal_error_detail or "Some clusters failed signal extraction.")
+            ),
             count=processed,
             duration_s=float(cluster_signal_result.get("duration_s", 0.0) or 0.0),
             metadata=dict(cluster_signal_result),
@@ -427,7 +502,7 @@ async def run_full_pipeline(
     if cluster_drift_result is None:
         cluster_drift_stage = _stage_status(
             "skipped",
-            detail="Cluster drift was unavailable for the current run.",
+            detail=cluster_drift_error_detail or "Cluster drift was unavailable for the current run.",
             count=0,
         )
     else:
@@ -490,7 +565,7 @@ async def run_full_pipeline(
                 ),
                 "cluster": _stage_status(
                     cluster_stage_status,
-                    detail="Cluster run finished for the requested scope.",
+                    detail=cluster_error_detail or "Cluster run finished for the requested scope.",
                     count=int(cluster_result.get("n_clusters", 0) or 0),
                     duration_s=cluster_duration,
                     metadata=dict(cluster_result),

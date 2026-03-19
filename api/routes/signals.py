@@ -5,8 +5,8 @@ from fastapi import APIRouter, BackgroundTasks
 from api.models import SignalRecord
 from brief.generator import clear_brief_cache
 from config.domains import get_domain_config
-from db.queries import topic_filter_sql
 from db.init import get_conn
+from db.topic_queries import topic_filter_sql
 from delta.engine import compute_drift
 from delta.mapper import compute_segment_profiles
 from extraction.extractor import run_extraction

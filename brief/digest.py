@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 
 from api.models import DigestResponse
 from brief.generator import OLLAMA_MODEL, _call_ollama_json
-from db.queries import get_digest_articles
+from db.topic_queries import get_digest_articles
 
 
 _DIGEST_PROMPT_TEMPLATE = """IMPORTANT: Your entire response MUST be in English.

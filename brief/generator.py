@@ -13,8 +13,8 @@ from brief.prompt import (
     confidence_label,
 )
 from config.settings import MIN_BRIEF_CONFIDENCE
-from db.queries import topic_filter_sql
 from db.init import get_conn
+from db.topic_queries import topic_filter_sql
 from delta.engine import compute_drift
 from pydantic import ValidationError
 

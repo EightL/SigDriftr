@@ -1,8 +1,8 @@
 import hashlib
 from datetime import datetime, timedelta, timezone
 
-from db.queries import topic_filter_sql
 from db.init import get_conn
+from db.topic_queries import topic_filter_sql
 
 
 SEGMENTS = ["young_urban", "family", "senior", "b2b"]

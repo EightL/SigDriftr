@@ -2,8 +2,8 @@ import json
 from datetime import datetime, timezone
 
 from config.feeds import FEEDS
-from db.queries import topic_filter_sql
 from db.init import get_conn
+from db.topic_queries import topic_filter_sql
 from extraction.entities import extract_entities, normalize_entity_key
 from extraction.llm_client import extract_signals
 from ingestion.bandit import record_signal_reward

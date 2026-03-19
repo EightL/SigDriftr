@@ -58,12 +58,12 @@ def compute_segment_profiles(
             s.seg_young_urban, s.seg_family, s.seg_senior, s.seg_b2b
         FROM signals s
         JOIN articles a ON s.article_id = a.id
-        WHERE s.extracted_at >= ?
+        WHERE COALESCE(a.published_at, a.fetched_at) >= ?
     """
-    params: list[str] = [since]
+    params: list[object] = [since]
     topic_sql, topic_params = topic_filter_sql("a", topic)
     query += topic_sql
-    params.extend(str(item) for item in topic_params)
+    params.extend(topic_params)
 
     rows = conn.execute(query, params).fetchall()
 

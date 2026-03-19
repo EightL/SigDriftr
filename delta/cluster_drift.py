@@ -1269,7 +1269,7 @@ def run_cluster_drift(run_id: str) -> dict[str, object]:
                 run_meta["country"],
                 run_meta["source"],
                 run_meta["language"],
-                len(observations),
+                len(current_clusters),
                 len(matched),
                 len(new_clusters),
                 len(missing_tracks),
@@ -1473,25 +1473,26 @@ def get_latest_cluster_drift(
     language: str | None = None,
 ) -> dict[str, object] | None:
     conn = get_conn()
-    row = conn.execute(
-        """
+    normalized_country = (country or "").strip().upper()
+    normalized_source = (source or "").strip().lower()
+    normalized_language = ((language or "").strip().lower() or None)
+    query = """
         SELECT run_id
         FROM cluster_drift_runs
         WHERE topic = ?
           AND country = ?
           AND source = ?
-          AND ((? IS NULL AND language IS NULL) OR language = ?)
         ORDER BY computed_at DESC, run_id DESC
         LIMIT 1
-        """,
-        (
-            topic,
-            country,
-            source,
-            language,
-            language,
-        ),
-    ).fetchone()
+    """
+    params: list[object] = [topic, normalized_country, normalized_source]
+    if normalized_language is not None:
+        query = query.replace(
+            "ORDER BY computed_at DESC, run_id DESC",
+            "AND language = ?\n        ORDER BY computed_at DESC, run_id DESC",
+        )
+        params.append(normalized_language)
+    row = conn.execute(query, params).fetchone()
     if row is None:
         return None
     return get_cluster_drift(row[0])

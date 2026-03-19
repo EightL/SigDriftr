@@ -2,24 +2,13 @@
 
 ## Current Limitations
 1)
-The new embedding endpoint accepts any integer limit, including zero/negative values, and forwards it directly to SQL LIMIT without validation. In SQLite, a negative limit can effectively remove the limit, which can trigger unexpectedly large embedding runs and heavy model work from one API call.
-
-Endpoint parameter: api/routes/pipeline.py
-Forwarding to SQL: extraction/embedding_service.py
+`/pipeline/run` still orchestrates collection plus the existing article-level brief path. The embedding, clustering, cluster-signal, and cluster-drift stages are exposed as separate endpoints rather than one end-to-end orchestration call.
 
 2)
-“Latest run” lookup with no language filter only returns runs where language IS NULL, not “any language”.
-If a caller omits language, they may expect latest run across all languages for the scope. Current SQL explicitly restricts to NULL-language runs in that case.
-Relevant code:
-clustering/clustering_service.py
+Segment aggregation remains soft-weighted rather than hard-assigned. Because `seg_*` values are normalized weights, weak segment relevance still contributes to the aggregate unless additional thresholds are introduced.
 
 3)
-Invalid user inputs currently become internal server errors instead of clean client validation errors.
-The clustering service raises ValueError for empty topic or window_hours < 1, but the API route passes these directly and does not translate them to 4xx responses. That means malformed requests can return 500.
-Relevant code:
-api/routes/pipeline.py
-clustering/clustering_service.py
-clustering/clustering_service.py
+The article-level brief and the newer cluster-aware drift pipeline are not unified yet. Cluster drift is available through dedicated stage-5 endpoints, but the brief still summarizes the older article-level drift path.
 
 4)
 Add more different signals, eg. controversy, excitement, ...
@@ -55,22 +44,19 @@ Add more different signals, eg. controversy, excitement, ...
 - No per-user analysis isolation
 - Not suitable for multi-tenant deployment
 
-**No Background Job Processing**
-- No job queue (Celery scaffolding exists but not implemented)
-- /collect and /extract are synchronous HTTP endpoints (blocking caller)
-- No scheduled tasks (daily collection, baseline learning, etc.)
-- Long operations tie up worker processes
+**No Durable Background Job Queue**
+- APScheduler runs periodic jobs in-process, but there is no durable worker queue such as Celery/RQ
+- Long operations still execute inside the app process
+- Failed jobs are not persisted or retried across process restarts
 
-**No Vector Database**
-- No semantic search on signals
-- Can't answer: "Find articles about renewable energy similar to this one"
-- Embedding model used only for filtering, not stored or searchable
+**No Vector Index**
+- Embeddings are stored in SQLite, but there is no ANN/vector index for fast similarity retrieval
+- Can't yet answer: "Find articles about renewable energy similar to this one" efficiently at larger scale
 
-**No Learning-Based Baselines**
-- Baselines are seeded (first profile = baseline), never updated
-- No historical trend analysis
-- Can't distinguish seasonal drift from permanent shifts
-- Baselines become stale over time
+**No Long-Horizon Baseline Modeling**
+- Article-level baselines and cluster tracks use EMA-style updates, but there is no seasonal or long-horizon baseline model
+- The system still cannot distinguish seasonal drift from structural change
+- Baseline quality depends on recently observed volume
 
 ### Operational Gaps
 

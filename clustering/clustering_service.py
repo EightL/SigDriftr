@@ -442,8 +442,7 @@ def get_latest_cluster_run(
     normalized_source = _normalize_source(source)
     normalized_language = _normalize_language(language)
     conn = get_conn()
-    row = conn.execute(
-        """
+    query = """
         SELECT
             run_id,
             topic,
@@ -467,18 +466,21 @@ def get_latest_cluster_run(
         WHERE topic = ?
           AND country = ?
           AND source = ?
-          AND ((? IS NULL AND language IS NULL) OR language = ?)
         ORDER BY created_at DESC, id DESC
         LIMIT 1
-        """,
-        (
-            normalized_topic,
-            normalized_country,
-            normalized_source,
-            normalized_language,
-            normalized_language,
-        ),
-    ).fetchone()
+    """
+    params: list[object] = [
+        normalized_topic,
+        normalized_country,
+        normalized_source,
+    ]
+    if normalized_language is not None:
+        query = query.replace(
+            "ORDER BY created_at DESC, id DESC",
+            "AND language = ?\n        ORDER BY created_at DESC, id DESC",
+        )
+        params.append(normalized_language)
+    row = conn.execute(query, params).fetchone()
     if row is None:
         return None
 

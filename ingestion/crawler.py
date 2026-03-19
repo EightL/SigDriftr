@@ -3,6 +3,7 @@ import hashlib
 import re
 import urllib.request
 from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from functools import lru_cache
 
 try:
@@ -72,6 +73,34 @@ def _extract_fallback_text(html: str, fallback: str) -> str:
     )
     combined = re.sub(r"&[a-z#0-9]+;", " ", combined, flags=re.IGNORECASE)
     return _clean_text(combined or fallback)
+
+
+def _normalize_published_at(entry: dict) -> str | None:
+    raw_value = str(entry.get("published") or entry.get("updated") or "").strip()
+    parsed = None
+
+    if raw_value:
+        try:
+            parsed = datetime.fromisoformat(raw_value.replace("Z", "+00:00"))
+        except ValueError:
+            try:
+                parsed = parsedate_to_datetime(raw_value)
+            except (TypeError, ValueError, IndexError):
+                parsed = None
+
+    if parsed is None:
+        parsed_struct = entry.get("published_parsed") or entry.get("updated_parsed")
+        if parsed_struct is not None:
+            try:
+                parsed = datetime(*parsed_struct[:6], tzinfo=timezone.utc)
+            except (TypeError, ValueError, IndexError):
+                parsed = None
+
+    if parsed is None:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc).isoformat()
 
 
 def _text_for_similarity(title: str, summary: str, body: str = "") -> str:
@@ -180,7 +209,7 @@ async def _fetch_article_details(
         "body": body,
         "url": url,
         "canonical_url": canonical_url or url,
-        "published_at": entry.get("published", ""),
+        "published_at": _normalize_published_at(entry),
         "relevance_score": max(initial_score, final_score),
     }
 

@@ -1,8 +1,11 @@
 fastapi
 pydantic
 uvicorn
+python-dotenv
 feedparser
 tenacity
+trafilatura
+httpx
 sentence-transformers
 transformers>=4.40
 torch

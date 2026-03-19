@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 
 from api.models import (
     ClusterDriftStageResponse,
@@ -21,7 +21,7 @@ router = APIRouter()
 
 @router.post("/pipeline/run")
 async def run_pipeline(
-    topic: str,
+    topic: str = Query(..., min_length=1),
     country: str = "",
     source: str = "",
 ) -> dict[str, object]:
@@ -45,7 +45,7 @@ def run_embedding_stage(
     topic: str | None = None,
     country: str | None = None,
     source: str | None = None,
-    limit: int = 200,
+    limit: int = Query(default=200, ge=1, le=5000),
 ) -> dict[str, object]:
     return embed_pending_articles(
         limit=limit,
@@ -57,26 +57,29 @@ def run_embedding_stage(
 
 @router.post("/pipeline/cluster", response_model=ClusterRunResponse)
 def run_cluster_stage(
-    topic: str,
+    topic: str = Query(..., min_length=1),
     country: str = "",
     source: str = "",
     language: str | None = None,
-    window_hours: int = 24,
-    min_cluster_size: int = 3,
+    window_hours: int = Query(default=24, ge=1),
+    min_cluster_size: int = Query(default=3, ge=1),
 ) -> dict[str, object]:
-    return run_clustering(
-        topic=topic,
-        country=country,
-        source=source,
-        language=language,
-        window_hours=window_hours,
-        min_cluster_size=min_cluster_size,
-    )
+    try:
+        return run_clustering(
+            topic=topic,
+            country=country,
+            source=source,
+            language=language,
+            window_hours=window_hours,
+            min_cluster_size=min_cluster_size,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.post("/pipeline/cluster/signals", response_model=ClusterSignalStageResponse)
 def run_cluster_signal_stage(
-    run_id: str,
+    run_id: str = Query(..., min_length=1),
     overwrite: bool = False,
     min_cluster_size: int = 3,
 ) -> dict[str, object]:
@@ -93,7 +96,7 @@ def run_cluster_signal_stage(
 
 
 @router.post("/pipeline/cluster/drift", response_model=ClusterDriftStageResponse)
-def run_cluster_drift_stage(run_id: str) -> dict[str, object]:
+def run_cluster_drift_stage(run_id: str = Query(..., min_length=1)) -> dict[str, object]:
     try:
         return run_cluster_drift(run_id)
     except LookupError as exc:
@@ -106,7 +109,7 @@ def run_cluster_drift_stage(run_id: str) -> dict[str, object]:
 
 @router.get("/pipeline/clusters/latest", response_model=LatestClusterRunResponse)
 def get_latest_clusters(
-    topic: str,
+    topic: str = Query(..., min_length=1),
     country: str = "",
     source: str = "",
     language: str | None = None,

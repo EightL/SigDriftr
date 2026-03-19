@@ -183,6 +183,10 @@ def test_db_migration_adds_cluster_tables_and_types() -> None:
             row[1]: (row[2], row[4])
             for row in conn.execute("PRAGMA table_info(cluster_memberships)").fetchall()
         }
+        cluster_signal_columns = {
+            row[1]: (row[2], row[4])
+            for row in conn.execute("PRAGMA table_info(cluster_signals)").fetchall()
+        }
         run_columns = {
             row[1]: (row[2], row[4])
             for row in conn.execute("PRAGMA table_info(cluster_runs)").fetchall()
@@ -200,13 +204,18 @@ def test_db_migration_adds_cluster_tables_and_types() -> None:
         db.init.DB_PATH = ORIGINAL_DB_PATH
         temp_dir.cleanup()
 
-    assert {"cluster_runs", "clusters", "cluster_memberships"}.issubset(tables)
+    assert {"cluster_runs", "clusters", "cluster_memberships", "cluster_signals"}.issubset(
+        tables
+    )
     assert membership_columns["article_id"][0] == "TEXT"
     assert membership_columns["embedding_id"][0] == "INTEGER"
+    assert cluster_signal_columns["cluster_id"][0] == "INTEGER"
+    assert cluster_signal_columns["extractor_provider"][0] == "TEXT"
     assert "datetime" in str(membership_columns["created_at"][1]).lower()
     assert "datetime" in str(run_columns["created_at"][1]).lower()
     assert "idx_cm_run_article_unique" in indexes
     assert "idx_clusters_run_label" in indexes
+    assert "idx_cluster_signals_run_id" in indexes
 
 
 def test_run_clustering_uses_latest_complete_embedding_and_records_embedding_id() -> None:

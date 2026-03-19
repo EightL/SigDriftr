@@ -133,6 +133,40 @@ class EmbeddingStageResponse(BaseModel):
 ClusterRunStatus = Literal["completed", "all_noise", "skipped_small_sample"]
 
 
+class ClusterSignalRecord(BaseModel):
+    topic_label: str
+    concern_level: float
+    purchase_intent: float
+    avoidance_signals: float
+    sentiment: float
+    dominant_frame: str
+    frame_detail: str
+    seg_young_urban: float
+    seg_family: float
+    seg_senior: float
+    seg_b2b: float
+    evidence: list[str] = Field(default_factory=list)
+    raw_json: dict = Field(default_factory=dict)
+    member_count: int
+    membership_fingerprint: str
+    exemplar_article_ids: list[str] = Field(default_factory=list)
+    extractor_provider: str
+    extractor_model: str
+    schema_version: str
+    extracted_at: str
+
+
+class ClusterSignalStageResponse(BaseModel):
+    run_id: str
+    selected_clusters: int
+    processed: int
+    skipped_existing: int
+    failed: int
+    provider: str
+    model_name: str
+    duration_s: float
+
+
 class ClusterMember(BaseModel):
     article_id: str
     embedding_id: int
@@ -147,6 +181,7 @@ class ClusterResponse(BaseModel):
     centroid_vector: list[float]
     centroid_dim: int
     members: list[ClusterMember] = Field(default_factory=list)
+    signal: ClusterSignalRecord | None = None
 
 
 class ClusterRunMetadata(BaseModel):

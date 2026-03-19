@@ -83,6 +83,26 @@ def _parse_vector(raw_vector: str) -> list[float]:
     return vector
 
 
+def _safe_json_object(raw: str | None) -> dict[str, object]:
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _safe_json_list(raw: str | None) -> list[object]:
+    if not raw:
+        return []
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return []
+    return parsed if isinstance(parsed, list) else []
+
+
 def _select_embeddings(
     *,
     topic: str,
@@ -472,6 +492,35 @@ def get_latest_cluster_run(
         """,
         (run_id,),
     ).fetchall()
+    signal_rows = conn.execute(
+        """
+        SELECT
+            cluster_id,
+            topic_label,
+            concern_level,
+            purchase_intent,
+            avoidance_signals,
+            sentiment,
+            dominant_frame,
+            frame_detail,
+            seg_young_urban,
+            seg_family,
+            seg_senior,
+            seg_b2b,
+            evidence_json,
+            raw_json,
+            member_count,
+            membership_fingerprint,
+            exemplar_article_ids,
+            extractor_provider,
+            extractor_model,
+            schema_version,
+            extracted_at
+        FROM cluster_signals
+        WHERE run_id = ?
+        """,
+        (run_id,),
+    ).fetchall()
     membership_rows = conn.execute(
         """
         SELECT cluster_id, article_id, embedding_id, membership_strength, is_noise
@@ -481,6 +530,33 @@ def get_latest_cluster_run(
         """,
         (run_id,),
     ).fetchall()
+    signal_by_cluster = {
+        int(row[0]): {
+            "topic_label": row[1],
+            "concern_level": row[2],
+            "purchase_intent": row[3],
+            "avoidance_signals": row[4],
+            "sentiment": row[5],
+            "dominant_frame": row[6],
+            "frame_detail": row[7],
+            "seg_young_urban": row[8],
+            "seg_family": row[9],
+            "seg_senior": row[10],
+            "seg_b2b": row[11],
+            "evidence": [str(item) for item in _safe_json_list(row[12]) if isinstance(item, str)],
+            "raw_json": _safe_json_object(row[13]),
+            "member_count": int(row[14]),
+            "membership_fingerprint": row[15],
+            "exemplar_article_ids": [
+                str(item) for item in _safe_json_list(row[16]) if isinstance(item, str)
+            ],
+            "extractor_provider": row[17],
+            "extractor_model": row[18],
+            "schema_version": row[19],
+            "extracted_at": row[20],
+        }
+        for row in signal_rows
+    }
 
     members_by_cluster: dict[int, list[dict[str, object]]] = {}
     noise_members: list[dict[str, object]] = []
@@ -504,6 +580,7 @@ def get_latest_cluster_run(
             "centroid_vector": json.loads(centroid_vector),
             "centroid_dim": centroid_dim,
             "members": members_by_cluster.get(int(cluster_id), []),
+            "signal": signal_by_cluster.get(int(cluster_id)),
         }
         for cluster_id, cluster_label, size, centroid_vector, centroid_dim in cluster_rows
     ]

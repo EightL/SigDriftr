@@ -108,6 +108,43 @@ def _ensure_cluster_schema(conn: sqlite3.Connection) -> None:
     )
 
 
+def _ensure_cluster_signal_schema(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS cluster_signals (
+            cluster_id              INTEGER PRIMARY KEY REFERENCES clusters(id),
+            run_id                  TEXT    NOT NULL REFERENCES cluster_runs(run_id),
+            topic_label             TEXT    NOT NULL,
+            concern_level           REAL    NOT NULL,
+            purchase_intent         REAL    NOT NULL,
+            avoidance_signals       REAL    NOT NULL,
+            sentiment               REAL    NOT NULL,
+            dominant_frame          TEXT    NOT NULL,
+            frame_detail            TEXT    NOT NULL,
+            seg_young_urban         REAL    NOT NULL,
+            seg_family              REAL    NOT NULL,
+            seg_senior              REAL    NOT NULL,
+            seg_b2b                 REAL    NOT NULL,
+            evidence_json           TEXT    NOT NULL DEFAULT '[]',
+            raw_json                TEXT    NOT NULL DEFAULT '{}',
+            member_count            INTEGER NOT NULL,
+            membership_fingerprint  TEXT    NOT NULL,
+            exemplar_article_ids    TEXT    NOT NULL,
+            extractor_provider      TEXT    NOT NULL,
+            extractor_model         TEXT    NOT NULL,
+            schema_version          TEXT    NOT NULL DEFAULT 'v1',
+            extracted_at            TEXT    NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_cluster_signals_run_id
+        ON cluster_signals(run_id)
+        """
+    )
+
+
 def run_migrations(conn: sqlite3.Connection) -> None:
     """Apply idempotent schema migrations for existing databases."""
     table_names = {
@@ -260,6 +297,9 @@ def run_migrations(conn: sqlite3.Connection) -> None:
             """
         )
         _ensure_cluster_schema(conn)
+        _ensure_cluster_signal_schema(conn)
+    elif "cluster_signals" not in table_names:
+        _ensure_cluster_signal_schema(conn)
 
 
 def get_conn() -> sqlite3.Connection:
@@ -421,6 +461,7 @@ def get_conn() -> sqlite3.Connection:
             """
         )
         _ensure_cluster_schema(conn)
+        _ensure_cluster_signal_schema(conn)
         run_migrations(conn)
         conn.commit()
         _local.conn = conn

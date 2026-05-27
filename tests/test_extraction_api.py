@@ -2,6 +2,7 @@
 import asyncio
 import json
 import tempfile
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, patch
 
 import db.init
@@ -11,6 +12,9 @@ pytest.importorskip("tenacity")
 pytest.importorskip("pydantic")
 
 from brief.generator import clear_brief_cache
+
+
+RECENT_TS = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
 def setup_temp_db() -> tempfile.TemporaryDirectory:
@@ -38,9 +42,16 @@ def insert_article(article_id: str, topic: str, outlet: str = "irozhlas") -> Non
         """
         INSERT INTO articles
         (id, outlet, title, summary, url, topic, published_at, fetched_at)
-        VALUES (?, ?, 'Title', 'Summary', ?, ?, '2026-03-17T00:00:00+00:00', '2026-03-17T00:00:00+00:00')
+        VALUES (?, ?, 'Title', 'Summary', ?, ?, ?, ?)
         """,
-        (article_id, outlet, f"https://example.test/{article_id}", topic),
+        (
+            article_id,
+            outlet,
+            f"https://example.test/{article_id}",
+            topic,
+            RECENT_TS,
+            RECENT_TS,
+        ),
     )
     conn.commit()
 
@@ -65,7 +76,7 @@ def insert_signal(article_id: str) -> None:
         (article_id, concern_level, purchase_intent, avoidance_signals,
          dominant_frame, seg_young_urban, seg_family, seg_senior, seg_b2b,
          raw_json, extracted_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '2026-03-17T00:00:00+00:00')
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             article_id,
@@ -78,6 +89,7 @@ def insert_signal(article_id: str) -> None:
             raw_json["seg_senior"],
             raw_json["seg_b2b"],
             json.dumps(raw_json),
+            RECENT_TS,
         ),
     )
     conn.commit()
@@ -95,7 +107,7 @@ def test_get_signals_does_not_trigger_extraction() -> None:
         insert_signal("article-1")
 
         with patch("api.routes.signals.run_extraction") as mock_extract:
-            rows = signals_route.get_signals("inflace", BackgroundTasks())
+            rows = signals_route.get_signals("inflace", background_tasks=BackgroundTasks())
 
         assert len(rows) == 1
         assert rows[0]["article_id"] == "article-1"
@@ -179,57 +191,67 @@ def test_collect_route_runs_collection_cycle() -> None:
 def test_pipeline_route_returns_brief_summary() -> None:
     pytest.importorskip("fastapi")
     from api.routes import pipeline as pipeline_route
-    from brief.models import BriefConfidenceContext
 
     async def run_test() -> None:
-        with patch(
-            "api.routes.pipeline.run_collection_cycle",
-            new_callable=AsyncMock,
-            return_value={
-                "inserted": 2,
-                "extracted": 2,
-                "rewards_recorded": 2,
+        summary = {
+            "scope": {
                 "topic": "inflace",
+                "country": "",
+                "source": "",
+                "language": None,
             },
-        ) as mock_collect, patch(
-            "api.routes.pipeline.get_brief_summary",
-            return_value={
+            "run_id": None,
+            "generated_at": RECENT_TS,
+            "duration_s": 0.01,
+            "cluster_status": "not_run",
+            "brief_status": "warming",
+            "pipeline": {
+                "article_count": 2,
+                "signal_count": 2,
+                "embedding_count": 0,
+                "cluster_count": 0,
+                "noise_count": 0,
+                "cluster_status": "not_run",
+                "brief_status": "warming",
+                "strongest_segment": "family",
+                "stages": {
+                    "collect": {"status": "completed", "count": 2, "metadata": {}},
+                    "extract": {"status": "completed", "count": 2, "metadata": {}},
+                    "embed": {"status": "skipped", "count": 0, "metadata": {}},
+                    "cluster": {"status": "skipped", "count": 0, "metadata": {}},
+                    "cluster_signals": {"status": "skipped", "count": 0, "metadata": {}},
+                    "cluster_drift": {"status": "skipped", "count": 0, "metadata": {}},
+                    "brief": {"status": "warming", "count": 3, "metadata": {}},
+                },
+            },
+            "brief": {
                 "topic": "inflace",
                 "status": "warming",
+                "headline": "Inflation brief",
                 "alert_level": "mild",
-                "confidence_context": BriefConfidenceContext(
-                    segment_confidence={
-                        "young_urban": 0.4,
-                        "family": 0.7,
-                        "senior": 0.5,
-                        "b2b": 0.3,
-                    }
-                ),
-            },
-        ) as mock_brief:
-            result = await pipeline_route.run_pipeline("inflace")
-
-        assert result == {
-            "inserted": 2,
-            "extracted": 2,
-            "rewards_recorded": 2,
-            "topic": "inflace",
-            "brief_topic": "inflace",
-            "brief_status": "warming",
-            "brief_alert_level": "mild",
-            "brief_confidence": {
-                "young_urban": 0.4,
-                "family": 0.7,
-                "senior": 0.5,
-                "b2b": 0.3,
+                "most_affected_segment": "family",
+                "generation_mode": "hierarchical_legacy",
             },
         }
-        mock_collect.assert_awaited_once_with("inflace", country="", source="")
-        mock_brief.assert_called_once_with(
+        with patch(
+            "api.routes.pipeline.run_full_pipeline",
+            new_callable=AsyncMock,
+            return_value=summary,
+        ) as mock_pipeline:
+            result = await pipeline_route.run_pipeline(
+                "inflace",
+                window_hours=24,
+                min_cluster_size=3,
+            )
+
+        assert result == summary
+        mock_pipeline.assert_awaited_once_with(
             "inflace",
             country="",
             source="",
             language=None,
+            window_hours=24,
+            min_cluster_size=3,
         )
 
     asyncio.run(run_test())
@@ -275,16 +297,51 @@ def test_pipeline_api_returns_aligned_brief_trust_fields_for_cold_start_topic() 
     from main import app
 
     temp_dir = setup_temp_db()
+    summary = {
+        "scope": {
+            "topic": "cold-topic",
+            "country": "",
+            "source": "",
+            "language": None,
+        },
+        "run_id": None,
+        "generated_at": RECENT_TS,
+        "duration_s": 0.01,
+        "cluster_status": "not_run",
+        "brief_status": "insufficient_data",
+        "pipeline": {
+            "article_count": 0,
+            "signal_count": 0,
+            "embedding_count": 0,
+            "cluster_count": 0,
+            "noise_count": 0,
+            "cluster_status": "not_run",
+            "brief_status": "insufficient_data",
+            "strongest_segment": None,
+            "stages": {
+                "collect": {"status": "completed", "count": 0, "metadata": {}},
+                "extract": {"status": "completed", "count": 0, "metadata": {}},
+                "embed": {"status": "completed", "count": 0, "metadata": {}},
+                "cluster": {"status": "skipped", "count": 0, "metadata": {}},
+                "cluster_signals": {"status": "skipped", "count": 0, "metadata": {}},
+                "cluster_drift": {"status": "skipped", "count": 0, "metadata": {}},
+                "brief": {"status": "insufficient_data", "count": 3, "metadata": {}},
+            },
+        },
+        "brief": {
+            "topic": "cold-topic",
+            "status": "insufficient_data",
+            "headline": "Insufficient data",
+            "alert_level": "none",
+            "most_affected_segment": None,
+            "generation_mode": "fallback",
+        },
+    }
     try:
         with patch(
-            "api.routes.pipeline.run_collection_cycle",
+            "api.routes.pipeline.run_full_pipeline",
             new_callable=AsyncMock,
-            return_value={
-                "inserted": 0,
-                "extracted": 0,
-                "rewards_recorded": 0,
-                "topic": "cold-topic",
-            },
+            return_value=summary,
         ), patch(
             "brief.generator._call_ollama_json",
             side_effect=AssertionError("LLM should not run for insufficient_data."),
@@ -296,16 +353,10 @@ def test_pipeline_api_returns_aligned_brief_trust_fields_for_cold_start_topic() 
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["brief_topic"] == "cold-topic"
+    assert payload["scope"]["topic"] == "cold-topic"
     assert payload["brief_status"] == "insufficient_data"
-    assert payload["brief_alert_level"] == "none"
-    assert "brief_confidence" in payload
-    assert set(payload["brief_confidence"].keys()) == {
-        "young_urban",
-        "family",
-        "senior",
-        "b2b",
-    }
+    assert payload["brief"]["alert_level"] == "none"
+    assert payload["pipeline"]["brief_status"] == "insufficient_data"
 
 
 def test_run_extraction_passes_topic_to_signal_extractor() -> None:

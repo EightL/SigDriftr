@@ -3,12 +3,16 @@ import hashlib
 import sqlite3
 import tempfile
 from pathlib import Path
+from datetime import datetime, timezone
 
 import db.init
 from db.init import run_migrations
 from delta.engine import _compute_confidence, compute_drift, update_baseline_from_profile
 from delta.mapper import compute_segment_profiles
 from delta.seeder import seed_baselines
+
+
+RECENT_TS = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
 def setup_temp_db() -> tempfile.TemporaryDirectory:
@@ -45,9 +49,16 @@ def insert_article_with_signal(
         """
         INSERT INTO articles
         (id, outlet, title, summary, url, topic, published_at, fetched_at)
-        VALUES (?, 'unit-test', ?, '', ?, ?, '2026-03-17T00:00:00+00:00', '2026-03-17T00:00:00+00:00')
+        VALUES (?, 'unit-test', ?, '', ?, ?, ?, ?)
         """,
-        (article_id, article_id, f"https://example.test/{article_id}", topic),
+        (
+            article_id,
+            article_id,
+            f"https://example.test/{article_id}",
+            topic,
+            RECENT_TS,
+            RECENT_TS,
+        ),
     )
     conn.execute(
         """
@@ -55,7 +66,7 @@ def insert_article_with_signal(
         (article_id, concern_level, purchase_intent, avoidance_signals,
          dominant_frame, seg_young_urban, seg_family, seg_senior, seg_b2b,
          raw_json, extracted_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '{}', '2026-03-17T00:00:00+00:00')
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '{}', ?)
         """,
         (
             article_id,
@@ -67,6 +78,7 @@ def insert_article_with_signal(
             seg_family,
             seg_senior,
             seg_b2b,
+            RECENT_TS,
         ),
     )
     conn.commit()

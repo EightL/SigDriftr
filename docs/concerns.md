@@ -2,13 +2,18 @@
 
 ## Current Limitations
 1)
-`/pipeline/run` still orchestrates collection plus the existing article-level brief path. The embedding, clustering, cluster-signal, and cluster-drift stages are exposed as separate endpoints rather than one end-to-end orchestration call.
+`/pipeline/run` orchestrates collection, extraction, embedding, clustering,
+cluster-signal extraction, cluster drift, and brief generation. The same stages
+also remain exposed as separate endpoints for debugging and partial reruns.
 
 2)
 Segment aggregation remains soft-weighted rather than hard-assigned. Because `seg_*` values are normalized weights, weak segment relevance still contributes to the aggregate unless additional thresholds are introduced.
 
 3)
-The article-level brief and the newer cluster-aware drift pipeline are not unified yet. Cluster drift is available through dedicated stage-5 endpoints, but the brief still summarizes the older article-level drift path.
+The brief path now prefers cluster-aware drift when a completed cluster-drift run
+is available, then falls back to article-level drift when clustering is missing,
+too small, or all noise. The fallback path is useful for demos, but it should be
+called out as lower confidence.
 
 4)
 Add more different signals, eg. controversy, excitement, ...

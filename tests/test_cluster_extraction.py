@@ -2,6 +2,7 @@
 import hashlib
 import json
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -26,6 +27,7 @@ from extraction.embedder import get_expected_dim, get_model_name
 
 
 ORIGINAL_DB_PATH = db.init.DB_PATH
+RECENT_TS = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
 def setup_temp_db() -> tempfile.TemporaryDirectory:
@@ -62,14 +64,14 @@ def insert_article(
     title: str | None = None,
     summary: str | None = None,
     body: str | None = None,
-    published_at: str = "2026-03-18T10:00:00+00:00",
+    published_at: str = RECENT_TS,
 ) -> None:
     conn = db.init.get_conn()
     conn.execute(
         """
         INSERT INTO articles
         (id, outlet, title, summary, body, url, canonical_url, topic, country, language, published_at, fetched_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'CZ', 'cs', ?, '2026-03-18T10:05:00+00:00')
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'CZ', 'cs', ?, ?)
         """,
         (
             article_id,
@@ -81,6 +83,7 @@ def insert_article(
             f"https://example.test/{article_id}",
             topic,
             published_at,
+            RECENT_TS,
         ),
     )
     conn.commit()
@@ -117,7 +120,7 @@ def insert_article_signal(
         (article_id, concern_level, purchase_intent, avoidance_signals,
          dominant_frame, seg_young_urban, seg_family, seg_senior, seg_b2b,
          raw_json, extracted_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '2026-03-18T10:10:00+00:00')
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             article_id,
@@ -130,6 +133,7 @@ def insert_article_signal(
             seg_senior,
             seg_b2b,
             json.dumps(raw_json),
+            RECENT_TS,
         ),
     )
     conn.commit()

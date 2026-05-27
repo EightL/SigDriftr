@@ -1,6 +1,23 @@
 # SigDriftr
 
-Minimal demo pipeline for Czech RSS collection, local signal extraction, drift detection, and short brief generation.
+Experimental FastAPI pipeline for RSS collection, local LLM signal extraction,
+drift detection, storyline clustering, and short analyst brief generation.
+
+## Flow
+
+1. `ingestion/` selects RSS feeds with a contextual bandit, fetches articles, and
+   keeps topic-relevant matches.
+2. `extraction/` sends article text to local Ollama models and stores normalized
+   behavioral signals in SQLite.
+3. `delta/` aggregates article signals into audience segment profiles and compares
+   them with learned or seeded baselines.
+4. `extraction/embedding_service.py` embeds articles for cluster analysis.
+5. `clustering/` reduces embeddings with UMAP and groups them with HDBSCAN.
+6. `extraction/cluster_extractor.py` and `delta/cluster_drift.py` summarize and
+   track cluster-level storyline drift.
+7. `brief/` turns drift evidence into a structured research brief with deterministic
+   fallback behavior when the local LLM is unavailable.
+8. `api/` and `static/` expose the API and demo dashboard.
 
 ## File architecture
 
@@ -22,6 +39,25 @@ pip install -r requirements.txt
 uvicorn main:app --reload
 ```
 
+## Test
+
+```bash
+pip install -r requirements-dev.txt
+pytest -q
+```
+
+## Docker
+
+```bash
+docker build -t sigdriftr .
+docker run --rm -p 8000:8000 sigdriftr
+```
+
+The app expects Ollama at `http://localhost:11434` for live extraction and brief
+generation. Without Ollama, deterministic fallback paths still cover parts of the
+API, but article and cluster signal extraction will not produce model-backed
+signals.
+
 ## Use
 
 - Open API docs: `http://localhost:8000/docs`
@@ -33,4 +69,3 @@ uvicorn main:app --reload
 - Technical design: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - Developer guide: [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)
 - Limitations and roadmap: [docs/concerns.md](docs/concerns.md)
-

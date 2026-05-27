@@ -4,6 +4,7 @@ import json
 import tempfile
 import types
 from pathlib import Path
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, Mock, patch
 
 import db.init
@@ -16,6 +17,7 @@ from api import scheduler as pipeline_scheduler
 
 
 ORIGINAL_DB_PATH = db.init.DB_PATH
+RECENT_TS = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
 def setup_temp_db() -> tempfile.TemporaryDirectory:
@@ -55,9 +57,16 @@ def insert_article_with_signal(
         """
         INSERT INTO articles
         (id, outlet, title, summary, url, topic, published_at, fetched_at)
-        VALUES (?, 'unit-test', ?, 'Summary', ?, ?, '2026-03-17T00:00:00+00:00', '2026-03-17T00:00:00+00:00')
+        VALUES (?, 'unit-test', ?, 'Summary', ?, ?, ?, ?)
         """,
-        (article_id, article_id, f"https://example.test/{article_id}", topic),
+        (
+            article_id,
+            article_id,
+            f"https://example.test/{article_id}",
+            topic,
+            RECENT_TS,
+            RECENT_TS,
+        ),
     )
     raw_json = {
         "concern_level": concern,
@@ -75,7 +84,7 @@ def insert_article_with_signal(
         (article_id, concern_level, purchase_intent, avoidance_signals,
          dominant_frame, seg_young_urban, seg_family, seg_senior, seg_b2b,
          raw_json, extracted_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '2026-03-17T00:00:00+00:00')
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             article_id,
@@ -88,6 +97,7 @@ def insert_article_with_signal(
             seg_senior,
             seg_b2b,
             json.dumps(raw_json),
+            RECENT_TS,
         ),
     )
     conn.commit()

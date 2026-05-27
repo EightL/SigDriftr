@@ -14,14 +14,8 @@ def test_ui_route_serves_demo_page() -> None:
     assert response.status_code == 200
     assert "text/html" in response.headers["content-type"]
     assert "SIGDRIFTR" in response.text
-    assert "Drift Timeline" in response.text
-    assert 'id="compareButton"' in response.text
-    assert 'id="topicInput2"' in response.text
-    assert "brief-status-banner" in response.text
-    assert "insufficient data" in response.text
-    assert "warming" in response.text
-    assert "ready" in response.text
-    assert "compare-grid" in response.text
-    assert "getBriefStatusPresentation" in response.text
-    assert "Interpret with care" in response.text
-    assert "brief-headline is-muted" in response.text
+    assert "Cluster-Aware Output Layer" in response.text
+    assert 'id="compareToggle"' in response.text
+    assert 'id="scopeTopic2"' in response.text
+    assert "Stage 7 UI" in response.text
+    assert "Run Analysis" in response.text

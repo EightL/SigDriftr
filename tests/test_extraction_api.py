@@ -475,6 +475,92 @@ def test_ollama_request_parses_json_mode_response_directly() -> None:
     assert result["dominant_frame"] == "fear"
 
 
+def test_google_gemma_request_parses_generate_content_response() -> None:
+    from extraction.llm_client import _google_gemma_request
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self) -> bytes:
+            return json.dumps(
+                {
+                    "candidates": [
+                        {
+                            "content": {
+                                "parts": [
+                                    {
+                                        "text": "internal reasoning should be ignored",
+                                        "thought": True,
+                                    },
+                                    {
+                                        "text": json.dumps(
+                                            {
+                                                "concern_level": 0.7,
+                                                "purchase_intent": 0.3,
+                                                "avoidance_signals": 0.2,
+                                                "dominant_frame": "conflict",
+                                                "seg_young_urban": 0.4,
+                                                "seg_family": 0.3,
+                                                "seg_senior": 0.2,
+                                                "seg_b2b": 0.1,
+                                            }
+                                        )
+                                    }
+                                ]
+                            }
+                        }
+                    ]
+                }
+            ).encode("utf-8")
+
+    with (
+        patch("extraction.llm_client.GOOGLE_GEMMA_API_KEY", "test-key"),
+        patch("extraction.llm_client.GOOGLE_GEMMA_MODEL", "gemma-4-31b-it"),
+        patch("urllib.request.urlopen", return_value=FakeResponse()) as mock_urlopen,
+    ):
+        result = _google_gemma_request("Analyze this article.")
+
+    request = mock_urlopen.call_args.args[0]
+    assert "gemma-4-31b-it:generateContent" in request.full_url
+    assert "key=test-key" in request.full_url
+    assert result["concern_level"] == 0.7
+    assert result["dominant_frame"] == "conflict"
+
+
+def test_extract_signals_prefers_google_gemma_when_configured() -> None:
+    from extraction.llm_client import extract_signals
+
+    with (
+        patch("extraction.llm_client.LLM_PROVIDER", "google"),
+        patch("extraction.llm_client.GOOGLE_GEMMA_MODEL", "gemma-4-31b-it"),
+        patch(
+            "extraction.llm_client._try_google_gemma",
+            return_value={
+                "concern_level": 0.8,
+                "purchase_intent": 0.2,
+                "avoidance_signals": 0.1,
+                "dominant_frame": "fear",
+                "seg_young_urban": 0.4,
+                "seg_family": 0.3,
+                "seg_senior": 0.2,
+                "seg_b2b": 0.1,
+            },
+        ) as mock_google,
+        patch("extraction.llm_client._try_ollama") as mock_ollama,
+    ):
+        result = extract_signals("Title", "Summary", topic="politika")
+
+    mock_google.assert_called_once()
+    mock_ollama.assert_not_called()
+    assert result["extractor_provider"] == "google"
+    assert result["extractor_model"] == "gemma-4-31b-it"
+    assert result["dominant_frame"] == "fear"
+
+
 def test_prompt_template_requests_json_only() -> None:
     from extraction.llm_client import PROMPT_TEMPLATE
 

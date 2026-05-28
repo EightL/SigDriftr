@@ -1,12 +1,33 @@
 import json
 import math
+import os
+from pathlib import Path
 import urllib.error
+import urllib.parse
 import urllib.request
 
 from config.domains import DOMAIN_SIGNAL_KEYS, get_domain_config, topic_to_domain
+from dotenv import load_dotenv
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 
+load_dotenv(dotenv_path=Path(__file__).resolve().parent.parent / ".env")
+
+GOOGLE_GEMMA_API_KEY = (
+    os.environ.get("GOOGLE_GEMMA_API_KEY")
+    or os.environ.get("GEMINI_API_KEY")
+    or ""
+).strip()
+GOOGLE_GEMMA_MODEL = os.environ.get("GOOGLE_GEMMA_MODEL", "gemma-4-31b-it").strip()
+GOOGLE_GEMMA_URL_TEMPLATE = os.environ.get(
+    "GOOGLE_GEMMA_URL_TEMPLATE",
+    "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+).strip()
+GOOGLE_GEMMA_TIMEOUT_SECONDS = int(os.environ.get("GOOGLE_GEMMA_TIMEOUT_SECONDS", "120"))
+LLM_PROVIDER = os.environ.get(
+    "SIGDRIFTR_LLM_PROVIDER",
+    "google" if GOOGLE_GEMMA_API_KEY else "ollama",
+).strip().lower()
 OLLAMA_URL = "http://localhost:11434/api/generate"
 OLLAMA_MODEL = "qwen2.5:7b-instruct"
 OLLAMA_FALLBACK_MODEL = "gemma3:1b"
@@ -125,6 +146,29 @@ def _normalize_signals(result: dict | None) -> dict:
     return normalized
 
 
+def _build_prompt(title: str, summary: str, topic: str, domain_hint: str) -> str:
+    return PROMPT_TEMPLATE.format(
+        topic=topic,
+        title=title,
+        summary=summary,
+        domain_hint=domain_hint,
+    )
+
+
+def _parse_json_text(raw: str) -> dict | None:
+    text = raw.strip()
+    if not text:
+        return None
+    if text.startswith("```"):
+        lines = text.splitlines()
+        if lines and lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        text = "\n".join(lines).strip()
+    return json.loads(text)
+
+
 def _apply_domain_mask(signals: dict, domain: str) -> dict:
     """Zero out signal fields that are not relevant to the resolved domain."""
     config = get_domain_config(domain)
@@ -137,6 +181,54 @@ def _apply_domain_mask(signals: dict, domain: str) -> dict:
     signals["domain"] = domain
     signals["irrelevant_fields"] = irrelevant
     return signals
+
+
+@retry(
+    retry=retry_if_exception_type((urllib.error.URLError, TimeoutError, OSError)),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+    reraise=False,
+)
+def _google_gemma_request(prompt: str) -> dict | None:
+    """Single Google Gemma generateContent call retried on transient failures."""
+    if not GOOGLE_GEMMA_API_KEY:
+        return None
+
+    base_url = GOOGLE_GEMMA_URL_TEMPLATE.format(
+        model=urllib.parse.quote(GOOGLE_GEMMA_MODEL, safe="")
+    )
+    url = f"{base_url}?{urllib.parse.urlencode({'key': GOOGLE_GEMMA_API_KEY})}"
+    payload = json.dumps(
+        {
+            "contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": {
+                "temperature": 0.1,
+                "response_mime_type": "application/json",
+            },
+        }
+    ).encode("utf-8")
+    request = urllib.request.Request(
+        url,
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=GOOGLE_GEMMA_TIMEOUT_SECONDS) as response:
+        response_payload = json.loads(response.read().decode("utf-8"))
+
+    parts = (
+        response_payload.get("candidates", [{}])[0]
+        .get("content", {})
+        .get("parts", [])
+    )
+    raw = "".join(
+        str(part.get("text", ""))
+        for part in parts
+        if not part.get("thought")
+    ).strip()
+    if not raw:
+        raw = "".join(str(part.get("text", "")) for part in parts).strip()
+    return _parse_json_text(raw)
 
 
 @retry(
@@ -158,7 +250,15 @@ def _ollama_request(payload: bytes) -> dict | None:
 
     if not raw:
         return None
-    return json.loads(raw)
+    return _parse_json_text(raw)
+
+
+def _try_google_gemma(title: str, summary: str, topic: str, domain_hint: str) -> dict | None:
+    prompt = _build_prompt(title, summary, topic, domain_hint)
+    try:
+        return _google_gemma_request(prompt)
+    except Exception:
+        return None
 
 
 def _try_ollama(
@@ -168,12 +268,7 @@ def _try_ollama(
     topic: str,
     domain_hint: str,
 ) -> dict | None:
-    prompt = PROMPT_TEMPLATE.format(
-        topic=topic,
-        title=title,
-        summary=summary,
-        domain_hint=domain_hint,
-    )
+    prompt = _build_prompt(title, summary, topic, domain_hint)
     payload = json.dumps(
         {"model": model, "prompt": prompt, "stream": False, "format": "json"}
     ).encode("utf-8")
@@ -196,11 +291,27 @@ def extract_signals(
 ) -> dict:
     domain = topic_to_domain(topic)
     domain_hint = str(get_domain_config(domain)["prompt_hint"])
-    result = _try_ollama(title, summary, OLLAMA_MODEL, topic, domain_hint)
+    result = None
+    provider = LLM_PROVIDER
+    model = ""
+
+    if provider in {"google", "google_gemma", "gemma"}:
+        result = _try_google_gemma(title, summary, topic, domain_hint)
+        if result is not None:
+            model = GOOGLE_GEMMA_MODEL
+        else:
+            provider = "ollama"
+
+    if result is None:
+        result = _try_ollama(title, summary, OLLAMA_MODEL, topic, domain_hint)
+        model = OLLAMA_MODEL
     if result is None:
         result = _ollama_fallback(title, summary, topic, domain_hint)
+        model = OLLAMA_FALLBACK_MODEL
     signals = _normalize_signals(result)
     signals = _softmax_segments(signals)
     signals = _apply_affinity_prior(signals, affinity_tag)
     signals = _apply_domain_mask(signals, domain)
+    signals["extractor_provider"] = provider
+    signals["extractor_model"] = model
     return signals

@@ -1,14 +1,15 @@
 # SigDriftr
 
-Experimental FastAPI pipeline for RSS collection, local LLM signal extraction,
+Experimental FastAPI pipeline for RSS collection, LLM signal extraction,
 drift detection, storyline clustering, and short analyst brief generation.
 
 ## Flow
 
 1. `ingestion/` selects RSS feeds with a contextual bandit, fetches articles, and
    keeps topic-relevant matches.
-2. `extraction/` sends article text to local Ollama models and stores normalized
-   behavioral signals in SQLite.
+2. `extraction/` sends article text to Google Gemma when `GOOGLE_GEMMA_API_KEY`
+   is configured, falls back to local Ollama, and stores normalized behavioral
+   signals in SQLite.
 3. `delta/` aggregates article signals into audience segment profiles and compares
    them with learned or seeded baselines.
 4. `extraction/embedding_service.py` embeds articles for cluster analysis.
@@ -53,10 +54,11 @@ docker build -t sigdriftr .
 docker run --rm -p 8000:8000 sigdriftr
 ```
 
-The app expects Ollama at `http://localhost:11434` for live extraction and brief
-generation. Without Ollama, deterministic fallback paths still cover parts of the
-API, but article and cluster signal extraction will not produce model-backed
-signals.
+The app uses Google Gemma for article signal extraction when
+`GOOGLE_GEMMA_API_KEY` is set. Ollama at `http://localhost:11434` is still used
+as the article extraction fallback and for brief generation. Without either
+provider, deterministic fallback paths still cover parts of the API, but article
+and cluster signal extraction will not produce model-backed signals.
 
 ## Use
 

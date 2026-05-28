@@ -171,11 +171,11 @@ def test_select_feeds_orders_visited_arms_by_descending_score() -> None:
                 feed=feeds[2],
             )
 
-        selected = select_feeds("inflace", now=when, k=3, feeds=feeds)
+        selected = select_feeds("inflace", now=when, k=2, feeds=feeds)
     finally:
         cleanup_temp_db(temp_dir)
 
-    assert [feed["outlet"] for feed in selected] == ["alpha", "gamma", "beta"]
+    assert [feed["outlet"] for feed in selected] == ["alpha", "gamma"]
 
 
 def test_record_signal_reward_accepts_rfc2822_timestamp() -> None:

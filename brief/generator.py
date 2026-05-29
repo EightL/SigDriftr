@@ -1147,6 +1147,35 @@ def _relevant_fields_for_bundle(bundle: BriefBundle) -> list[str]:
 
 
 def _segment_prompt_view(segment: dict[str, object]) -> dict[str, object]:
+    source_mix = segment.get("source_mix")
+    source_mix_view = None
+    if isinstance(source_mix, dict):
+        source_mix_view = {
+            "warning": source_mix.get("warning"),
+            "jensen_shannon_divergence": source_mix.get("jensen_shannon_divergence"),
+            "current_article_count_by_outlet": (
+                source_mix.get("current", {}).get("article_count_by_outlet", {})
+                if isinstance(source_mix.get("current"), dict)
+                else {}
+            ),
+            "reference_article_count_by_outlet": (
+                source_mix.get("reference", {}).get("article_count_by_outlet", {})
+                if isinstance(source_mix.get("reference"), dict)
+                else {}
+            ),
+        }
+    source_normalized = segment.get("source_normalized")
+    normalized_view = None
+    if isinstance(source_normalized, dict):
+        normalized_view = {
+            "status": source_normalized.get("status"),
+            "panel_outlets": source_normalized.get("panel_outlets", []),
+            "observed_outlets": source_normalized.get("observed_outlets", []),
+            "missing_outlets": source_normalized.get("missing_outlets", []),
+            "drift_magnitude": source_normalized.get("drift_magnitude"),
+            "normalization_effect": source_normalized.get("normalization_effect"),
+            "interpretation": source_normalized.get("interpretation"),
+        }
     return {
         "segment": segment.get("segment"),
         "direction": segment.get("direction"),
@@ -1158,6 +1187,8 @@ def _segment_prompt_view(segment: dict[str, object]) -> dict[str, object]:
         "dominant_frame": segment.get("dominant_frame"),
         "baseline_frame": segment.get("baseline_frame"),
         "deltas": dict(segment.get("deltas", {})),
+        "source_mix": source_mix_view,
+        "source_normalized": normalized_view,
     }
 
 

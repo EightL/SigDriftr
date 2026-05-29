@@ -51,11 +51,25 @@ def get_cluster_drift_view(
 
 
 @router.get("/drift/{topic}", response_model=DriftResponse)
-def get_drift(topic: str, days_back: int = 7) -> dict:
+def get_drift(
+    topic: str,
+    days_back: int = 7,
+    country: str = "",
+    source: str = "",
+    language: str | None = None,
+) -> dict:
     real_topic = "" if topic == "_all" else topic
-    drift = compute_drift(real_topic, days_back=days_back)
+    drift = compute_drift(
+        real_topic,
+        days_back=days_back,
+        country=country,
+        source=source,
+        language=language,
+    )
+    source_mix = drift[0].get("source_mix") if drift else None
     return {
         "topic": topic,
         "days_back": days_back,
+        "source_mix": source_mix,
         "segments": drift,
     }

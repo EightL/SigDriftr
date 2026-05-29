@@ -103,6 +103,12 @@ def test_db_migration_adds_stage_one_columns_and_topic_links() -> None:
         topic_rows = conn.execute(
             "SELECT article_id, topic FROM article_topics ORDER BY article_id, topic"
         ).fetchall()
+        table_names = {
+            row[0]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            ).fetchall()
+        }
     finally:
         if hasattr(db.init._local, "conn"):
             db.init._local.conn.close()
@@ -112,6 +118,7 @@ def test_db_migration_adds_stage_one_columns_and_topic_links() -> None:
 
     assert {"body", "country", "language", "canonical_url"}.issubset(article_columns)
     assert topic_rows == [("legacy-1", "inflace")]
+    assert {"collection_runs", "collection_feed_stats"}.issubset(table_names)
 
 
 def test_crawl_filters_feeds_by_country_and_source() -> None:
@@ -140,6 +147,34 @@ def test_crawl_filters_feeds_by_country_and_source() -> None:
             "enabled": True,
         }
     ]
+
+
+def test_crawl_fixed_panel_mode_skips_bandit_selection() -> None:
+    from ingestion.crawler import crawl
+
+    temp_dir = setup_temp_db()
+    try:
+        with patch("ingestion.crawler.select_feeds") as mock_select, patch(
+            "ingestion.crawler._fetch_feed_bytes",
+            side_effect=RuntimeError("network blocked in unit test"),
+        ):
+            inserted = crawl("inflace", country="DE", collection_mode="fixed_panel")
+
+        rows = db.init.get_conn().execute(
+            """
+            SELECT outlet, fetch_success, reward
+            FROM collection_feed_stats
+            ORDER BY outlet
+            """
+        ).fetchall()
+    finally:
+        cleanup_temp_db(temp_dir)
+
+    assert inserted == 0
+    mock_select.assert_not_called()
+    assert [row[0] for row in rows] == ["spiegel", "tagesschau"]
+    assert all(row[1] == 0 for row in rows)
+    assert all(row[2] == 0.0 for row in rows)
 
 
 def test_same_article_can_map_to_multiple_topics_without_duplicate_article_rows() -> None:
@@ -173,11 +208,19 @@ def test_same_article_can_map_to_multiple_topics_without_duplicate_article_rows(
         topic_links = conn.execute(
             "SELECT topic FROM article_topics ORDER BY topic"
         ).fetchall()
+        run_stats = conn.execute(
+            """
+            SELECT inserted, accepted, duplicates
+            FROM collection_runs
+            ORDER BY completed_at
+            """
+        ).fetchall()
     finally:
         cleanup_temp_db(temp_dir)
 
     assert article_count == 1
     assert topic_links == [("ekonomika",), ("inflace",)]
+    assert run_stats == [(1, 1, 0), (0, 1, 1)]
 
 
 def test_crawl_stores_fallback_summary_as_body_when_full_text_is_unavailable() -> None:

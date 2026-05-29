@@ -1,7 +1,10 @@
 import asyncio
 import hashlib
 import re
+import time
 import urllib.request
+import uuid
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from functools import lru_cache
@@ -19,14 +22,100 @@ else:
     feedparser = _feedparser
 
 from config.feeds import get_enabled_feeds
-from config.settings import CRAWL_FETCH_CONCURRENCY, CRAWL_FEED_TIMEOUT_SECONDS
+from config.settings import (
+    BANDIT_REWARD_MODE,
+    COLLECTION_MODE,
+    CRAWL_FETCH_CONCURRENCY,
+    CRAWL_FEED_TIMEOUT_SECONDS,
+)
+from config.source_panels import select_fixed_panel_feeds
 from db.init import get_conn
-from ingestion.bandit import record_crawl_miss, select_feeds
+from ingestion.bandit import record_crawl_miss, record_yield_reward, select_feeds
 
 SEMANTIC_THRESHOLD = 0.55
 REQUEST_HEADERS = {"User-Agent": "SigDriftr/1.0"}
 MAX_EMBED_TEXT_LENGTH = 1200
 MAX_BODY_CHARS = 6000
+COLLECTION_MODES = {"bandit", "all", "fixed_panel"}
+REWARD_MODES = {"yield", "signal"}
+
+
+@dataclass
+class FeedCrawlStats:
+    outlet: str
+    country: str = ""
+    language: str | None = None
+    selected: bool = True
+    fetch_success: bool = False
+    entries_seen: int = 0
+    candidates: int = 0
+    accepted: int = 0
+    inserted: int = 0
+    duplicates: int = 0
+    relevance_total: float = 0.0
+    reward: float = 0.0
+    error_message: str | None = None
+
+    @property
+    def avg_relevance_score(self) -> float:
+        if self.accepted <= 0:
+            return 0.0
+        return round(self.relevance_total / self.accepted, 4)
+
+
+@dataclass
+class CrawlReport:
+    run_id: str
+    topic: str
+    country: str
+    source: str
+    collection_mode: str
+    reward_mode: str
+    eligible_feeds: list[str]
+    selected_feeds: list[str]
+    inserted: int = 0
+    accepted: int = 0
+    duplicates: int = 0
+    started_at: str = ""
+    completed_at: str = ""
+    duration_s: float = 0.0
+    feed_stats: list[FeedCrawlStats] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "run_id": self.run_id,
+            "topic": self.topic,
+            "country": self.country,
+            "source": self.source,
+            "collection_mode": self.collection_mode,
+            "reward_mode": self.reward_mode,
+            "eligible_feeds": self.eligible_feeds,
+            "selected_feeds": self.selected_feeds,
+            "inserted": self.inserted,
+            "accepted": self.accepted,
+            "duplicates": self.duplicates,
+            "started_at": self.started_at,
+            "completed_at": self.completed_at,
+            "duration_s": self.duration_s,
+            "feed_stats": [
+                {
+                    "outlet": item.outlet,
+                    "country": item.country,
+                    "language": item.language,
+                    "selected": item.selected,
+                    "fetch_success": item.fetch_success,
+                    "entries_seen": item.entries_seen,
+                    "candidates": item.candidates,
+                    "accepted": item.accepted,
+                    "inserted": item.inserted,
+                    "duplicates": item.duplicates,
+                    "avg_relevance_score": item.avg_relevance_score,
+                    "reward": item.reward,
+                    "error_message": item.error_message,
+                }
+                for item in self.feed_stats
+            ],
+        }
 
 
 @lru_cache(maxsize=1)
@@ -182,6 +271,104 @@ async def _fetch_feed(feed: dict, semaphore: asyncio.Semaphore) -> tuple[dict, o
             return feed, None
 
 
+def _normalize_collection_mode(collection_mode: str | None) -> str:
+    normalized = (collection_mode or COLLECTION_MODE).strip().lower() or "bandit"
+    if normalized not in COLLECTION_MODES:
+        raise ValueError(
+            f"Unsupported collection_mode {collection_mode!r}; expected one of {sorted(COLLECTION_MODES)}."
+        )
+    return normalized
+
+
+def _normalize_reward_mode(reward_mode: str | None) -> str:
+    normalized = (reward_mode or BANDIT_REWARD_MODE).strip().lower() or "yield"
+    if normalized not in REWARD_MODES:
+        raise ValueError(
+            f"Unsupported reward_mode {reward_mode!r}; expected one of {sorted(REWARD_MODES)}."
+        )
+    return normalized
+
+
+def _select_collection_feeds(
+    topic: str,
+    *,
+    country: str,
+    source: str,
+    now: datetime,
+    collection_mode: str,
+) -> tuple[list[dict], list[dict]]:
+    available_feeds = get_enabled_feeds(country=country, source=source)
+    if collection_mode == "all":
+        return available_feeds, list(available_feeds)
+    if collection_mode == "fixed_panel":
+        return available_feeds, select_fixed_panel_feeds(
+            available_feeds,
+            topic=topic,
+            country=country,
+        )
+    return available_feeds, select_feeds(topic, now=now, feeds=available_feeds)
+
+
+def _persist_crawl_report(conn, report: CrawlReport) -> None:
+    conn.execute(
+        """
+        INSERT OR REPLACE INTO collection_runs
+        (run_id, topic, country, source, collection_mode, reward_mode,
+         eligible_feeds, selected_feeds, inserted, accepted, duplicates,
+         started_at, completed_at, duration_s)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            report.run_id,
+            report.topic,
+            report.country,
+            report.source,
+            report.collection_mode,
+            report.reward_mode,
+            len(report.eligible_feeds),
+            len(report.selected_feeds),
+            report.inserted,
+            report.accepted,
+            report.duplicates,
+            report.started_at,
+            report.completed_at,
+            report.duration_s,
+        ),
+    )
+    conn.execute(
+        "DELETE FROM collection_feed_stats WHERE run_id = ?",
+        (report.run_id,),
+    )
+    conn.executemany(
+        """
+        INSERT INTO collection_feed_stats
+        (run_id, outlet, country, language, selected, fetch_success, entries_seen,
+         candidates, accepted, inserted, duplicates, avg_relevance_score, reward,
+         error_message)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        [
+            (
+                report.run_id,
+                item.outlet,
+                item.country,
+                item.language,
+                int(item.selected),
+                int(item.fetch_success),
+                item.entries_seen,
+                item.candidates,
+                item.accepted,
+                item.inserted,
+                item.duplicates,
+                item.avg_relevance_score,
+                item.reward,
+                item.error_message,
+            )
+            for item in report.feed_stats
+        ],
+    )
+
+
 async def _fetch_article_details(
     feed: dict,
     entry: dict,
@@ -235,20 +422,67 @@ def _upsert_article_topic(
     )
 
 
-async def _crawl_async(topic: str, country: str = "", source: str = "") -> int:
+async def _crawl_async_report(
+    topic: str,
+    country: str = "",
+    source: str = "",
+    *,
+    collection_mode: str | None = None,
+    reward_mode: str | None = None,
+) -> CrawlReport:
     conn = get_conn()
-    inserted = 0
+    started = time.perf_counter()
     now = datetime.now(timezone.utc)
-    available_feeds = get_enabled_feeds(country=country, source=source)
-    selected_feeds = select_feeds(topic, now=now, feeds=available_feeds)
+    normalized_mode = _normalize_collection_mode(collection_mode)
+    normalized_reward_mode = _normalize_reward_mode(reward_mode)
+    available_feeds, selected_feeds = _select_collection_feeds(
+        topic,
+        country=country,
+        source=source,
+        now=now,
+        collection_mode=normalized_mode,
+    )
+    report = CrawlReport(
+        run_id=f"collect-{uuid.uuid4().hex}",
+        topic=topic,
+        country=(country or "").strip().upper(),
+        source=(source or "").strip().lower(),
+        collection_mode=normalized_mode,
+        reward_mode=normalized_reward_mode,
+        eligible_feeds=[str(feed.get("outlet", "")) for feed in available_feeds],
+        selected_feeds=[str(feed.get("outlet", "")) for feed in selected_feeds],
+        started_at=now.isoformat(),
+    )
     semaphore = asyncio.Semaphore(CRAWL_FETCH_CONCURRENCY)
     parsed_feeds = await asyncio.gather(
         *[_fetch_feed(feed, semaphore) for feed in selected_feeds]
     )
 
     for feed, parsed in parsed_feeds:
-        matched_entries = 0
+        stats = FeedCrawlStats(
+            outlet=str(feed.get("outlet", "")),
+            country=str(feed.get("country", "")),
+            language=feed.get("language"),
+        )
+        report.feed_stats.append(stats)
+        if parsed is None:
+            stats.error_message = "feed_fetch_failed"
+            if normalized_reward_mode == "yield":
+                stats.reward = record_yield_reward(
+                    stats.outlet,
+                    topic,
+                    accepted_count=0,
+                    fetch_success=False,
+                    when=now,
+                    feed=feed,
+                )
+            else:
+                stats.reward = record_crawl_miss(stats.outlet, topic, when=now, feed=feed)
+            continue
+
+        stats.fetch_success = True
         entries = list(getattr(parsed, "entries", []) or [])
+        stats.entries_seen = len(entries)
         candidates: list[tuple[dict, float]] = []
 
         for entry in entries:
@@ -258,6 +492,7 @@ async def _crawl_async(topic: str, country: str = "", source: str = "") -> int:
             if topic and not _is_relevant(initial_score):
                 continue
             candidates.append((entry, initial_score))
+        stats.candidates = len(candidates)
 
         enriched_entries = await asyncio.gather(
             *[
@@ -268,7 +503,8 @@ async def _crawl_async(topic: str, country: str = "", source: str = "") -> int:
         for item in enriched_entries:
             if item is None:
                 continue
-            matched_entries += 1
+            stats.accepted += 1
+            stats.relevance_total += float(item["relevance_score"] or 0.0)
             canonical_url = item["canonical_url"] or item["url"]
             article_id = hashlib.sha256(canonical_url.encode()).hexdigest()
             cursor = conn.execute(
@@ -293,8 +529,10 @@ async def _crawl_async(topic: str, country: str = "", source: str = "") -> int:
                 ),
             )
             if cursor.rowcount:
-                inserted += 1
+                report.inserted += 1
+                stats.inserted += 1
             else:
+                stats.duplicates += 1
                 conn.execute(
                     """
                     UPDATE articles
@@ -332,14 +570,55 @@ async def _crawl_async(topic: str, country: str = "", source: str = "") -> int:
                 now.isoformat(),
             )
 
-        if matched_entries == 0:
-            record_crawl_miss(feed["outlet"], topic, when=now, feed=feed)
+        report.accepted += stats.accepted
+        report.duplicates += stats.duplicates
+        if normalized_reward_mode == "yield":
+            stats.reward = record_yield_reward(
+                stats.outlet,
+                topic,
+                accepted_count=stats.accepted,
+                avg_relevance_score=stats.avg_relevance_score,
+                duplicate_count=stats.duplicates,
+                fetch_success=stats.fetch_success,
+                when=now,
+                feed=feed,
+            )
+        elif stats.accepted == 0:
+            stats.reward = record_crawl_miss(stats.outlet, topic, when=now, feed=feed)
 
+    report.completed_at = datetime.now(timezone.utc).isoformat()
+    report.duration_s = round(time.perf_counter() - started, 4)
+    _persist_crawl_report(conn, report)
     conn.commit()
-    return inserted
+    return report
 
 
-def crawl(topic: str, country: str = "", source: str = "") -> int:
+async def _crawl_async(
+    topic: str,
+    country: str = "",
+    source: str = "",
+    *,
+    collection_mode: str | None = None,
+    reward_mode: str | None = None,
+) -> int:
+    report = await _crawl_async_report(
+        topic,
+        country=country,
+        source=source,
+        collection_mode=collection_mode,
+        reward_mode=reward_mode,
+    )
+    return report.inserted
+
+
+def crawl(
+    topic: str,
+    country: str = "",
+    source: str = "",
+    *,
+    collection_mode: str | None = None,
+    reward_mode: str | None = None,
+) -> int:
     """Run the async crawler from sync code paths.
 
     This wrapper assumes there is no active event loop. Async callers should
@@ -348,7 +627,15 @@ def crawl(topic: str, country: str = "", source: str = "") -> int:
     try:
         asyncio.get_running_loop()
     except RuntimeError:
-        return asyncio.run(_crawl_async(topic, country=country, source=source))
+        return asyncio.run(
+            _crawl_async(
+                topic,
+                country=country,
+                source=source,
+                collection_mode=collection_mode,
+                reward_mode=reward_mode,
+            )
+        )
     raise RuntimeError(
         "crawl() is a synchronous wrapper and cannot run inside an active event loop; "
         "await _crawl_async(topic) instead; optional country/source filters may also be passed."

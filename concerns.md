@@ -67,7 +67,7 @@ article body text into the prompt when cleaned body text is available.
 
 ### 1. RSS-Only Data Measures Coverage, Not Audience Reaction
 
-**Status:** Legitimate.
+**Status:** Partly mitigated.
 
 The ingestion layer uses configured RSS feeds. This is enough to analyze news
 coverage, framing, and source mix, but it does not measure what readers believe,
@@ -222,21 +222,19 @@ relevant to families shifted".
 
 **Status:** Legitimate.
 
-The bandit changes which feeds are selected. `delta/mapper.py` aggregates
-signals across all matching articles without normalizing to a fixed outlet
-panel. If one run has mostly business outlets and another has more tabloid
-coverage, the drift may be source composition, not topic change.
+The bandit can change which feeds are selected. `delta/mapper.py` still
+aggregates raw signals across all matching articles, so raw drift remains
+sensitive to source composition. The API now also returns source-mix metadata
+and a bounded fixed-panel `source_normalized` drift view that averages
+per-outlet profiles before comparing against the existing segment baseline.
 
 **Risk:** The system confuses outlet mix drift with signal drift.
 
 **Solutions:**
-- Return `article_count_by_outlet` and `outlet_mix_drift` in `/drift`.
-- Compute Jensen-Shannon divergence between current and baseline outlet
-  distributions.
-- Add source-normalized drift:
-  - compute profiles per outlet,
-  - combine them using fixed panel weights,
-  - report both raw and source-normalized values.
+- Keep returning `article_count_by_outlet` and outlet-mix divergence in `/drift`.
+- Keep reporting both raw and source-normalized values.
+- Add per-outlet learned baselines if stronger source normalization becomes
+  necessary.
 - Use fixed source panels in evaluation runs.
 
 ### 8. Confidence Scores Are Not Calibrated

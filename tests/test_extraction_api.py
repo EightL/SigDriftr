@@ -453,7 +453,7 @@ def test_run_extraction_uses_article_topic_when_processing_all_topics() -> None:
     )
     assert raw_json["entities"] == [{"text": "Praha", "label": "GPE"}]
     assert entity_rows == [("Praha", "GPE")]
-    mock_reward.assert_called_once()
+    mock_reward.assert_not_called()
 
 
 def test_run_extraction_passes_body_and_stores_relevance_fields() -> None:

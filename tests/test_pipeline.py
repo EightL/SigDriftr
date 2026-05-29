@@ -154,6 +154,40 @@ def build_explainer_payload(segment: str) -> dict[str, object]:
     }
 
 
+def build_crawl_report(inserted: int) -> types.SimpleNamespace:
+    feed_stats = [
+        {
+            "outlet": "irozhlas",
+            "country": "CZ",
+            "language": "cs",
+            "selected": True,
+            "fetch_success": True,
+            "entries_seen": inserted,
+            "candidates": inserted,
+            "accepted": inserted,
+            "inserted": inserted,
+            "duplicates": 0,
+            "avg_relevance_score": 0.9 if inserted else 0.0,
+            "reward": 0.0,
+            "error_message": None,
+        }
+    ]
+    return types.SimpleNamespace(
+        run_id="collect-test",
+        topic="inflace",
+        country="",
+        source="",
+        collection_mode="bandit",
+        reward_mode="yield",
+        eligible_feeds=["irozhlas"],
+        selected_feeds=["irozhlas"],
+        inserted=inserted,
+        accepted=inserted,
+        duplicates=0,
+        to_dict=lambda: {"feed_stats": feed_stats},
+    )
+
+
 def test_run_collection_cycle_chains_extract_and_rewards() -> None:
     stub_generator = types.ModuleType("brief.generator")
     stub_generator.clear_brief_cache = Mock()
@@ -161,8 +195,8 @@ def test_run_collection_cycle_chains_extract_and_rewards() -> None:
     stub_extractor.run_extraction = Mock(return_value=2)
 
     with patch(
-        "api.pipeline._crawl_async",
-        new=AsyncMock(return_value=2),
+        "api.pipeline._crawl_async_report",
+        new=AsyncMock(return_value=build_crawl_report(2)),
     ) as mock_crawl, patch(
         "api.pipeline.record_recent_signal_rewards",
         return_value=2,
@@ -178,24 +212,38 @@ def test_run_collection_cycle_chains_extract_and_rewards() -> None:
     assert result == {
         "inserted": 2,
         "extracted": 2,
-        "rewards_recorded": 2,
+        "rewards_recorded": 0,
         "topic": "inflace",
         "country": "",
         "source": "",
+        "collection_mode": "bandit",
+        "reward_mode": "yield",
+        "run_id": "collect-test",
+        "eligible_feeds": ["irozhlas"],
+        "selected_feeds": ["irozhlas"],
+        "accepted": 2,
+        "duplicates": 0,
+        "feed_stats": build_crawl_report(2).to_dict()["feed_stats"],
     }
-    mock_crawl.assert_awaited_once_with("inflace", country="", source="")
+    mock_crawl.assert_awaited_once_with(
+        "inflace",
+        country="",
+        source="",
+        collection_mode="bandit",
+        reward_mode="yield",
+    )
     stub_extractor.run_extraction.assert_called_once_with(
         "inflace",
         record_bandit_reward=False,
     )
-    mock_rewards.assert_called_once()
+    mock_rewards.assert_not_called()
     stub_generator.clear_brief_cache.assert_called_once_with()
 
 
 def test_run_collection_cycle_skips_extract_when_no_articles_are_inserted() -> None:
     with patch(
-        "api.pipeline._crawl_async",
-        new=AsyncMock(return_value=0),
+        "api.pipeline._crawl_async_report",
+        new=AsyncMock(return_value=build_crawl_report(0)),
     ) as mock_crawl, patch(
         "api.pipeline.record_recent_signal_rewards"
     ) as mock_rewards:
@@ -208,8 +256,22 @@ def test_run_collection_cycle_skips_extract_when_no_articles_are_inserted() -> N
         "topic": "inflace",
         "country": "",
         "source": "",
+        "collection_mode": "bandit",
+        "reward_mode": "yield",
+        "run_id": "collect-test",
+        "eligible_feeds": ["irozhlas"],
+        "selected_feeds": ["irozhlas"],
+        "accepted": 0,
+        "duplicates": 0,
+        "feed_stats": build_crawl_report(0).to_dict()["feed_stats"],
     }
-    mock_crawl.assert_awaited_once_with("inflace", country="", source="")
+    mock_crawl.assert_awaited_once_with(
+        "inflace",
+        country="",
+        source="",
+        collection_mode="bandit",
+        reward_mode="yield",
+    )
     mock_rewards.assert_not_called()
 
 

@@ -79,14 +79,15 @@ External Dependencies:
 
 ### 1. Ingestion (`ingestion/`)
 
-**Purpose:** Collect relevant articles from Czech RSS feeds based on topic-adaptive feed selection.
+**Purpose:** Collect relevant articles from eligible RSS feeds using either adaptive or fixed source selection.
 
 **Input:** Topic string (e.g., "energie", "zdravotnictvi")
 **Output:** Articles stored in SQLite, bandit state updated
 
 **Components:**
-- **crawler.py**: `fetch_articles(topic)` → queries bandit for top feeds → fetches concurrently → two-pass filters → stores with INSERT OR IGNORE
-- **bandit.py**: LinUCB contextual bandit for feed selection. Maintains per-feed arm parameters (θ, A, b). Updates based on article yield.
+- **crawler.py**: selects feeds → fetches concurrently → two-pass filters → stores with INSERT OR IGNORE → records collection telemetry.
+- **bandit.py**: LinUCB contextual bandit for adaptive feed selection. Maintains per-feed arm parameters (θ, A, b). Default rewards come from non-LLM article yield, relevance, and duplicate-adjusted collection results.
+- **source_panels.py**: fixed outlet panels for reproducible evaluation and demos.
 
 **Filtering Strategy (Two-Pass):**
 1. Direct match: "energie" in title OR summary → ACCEPT
@@ -102,6 +103,8 @@ Fallback: If embedding model unavailable, only direct match applies (silent degr
 
 **Design Decisions:**
 - **Why LinUCB?** Balances exploration/exploitation mathematically. Adapts to topic context.
+- **Why fixed panels?** Evaluation and demos need stable outlet composition, so `collection_mode=fixed_panel` bypasses adaptive selection.
+- **Why yield rewards?** The default bandit policy should learn useful article collection, not amplify LLM-scored signal strength.
 - **Why two-pass?** Direct match is fast; semantic fallback catches related articles.
 - **Why feed affinity priors?** Improve segment weight accuracy by incorporating feed bias.
 
@@ -207,11 +210,25 @@ alert_level:
 
 **Frame Shift:** Detected if current dominant_frame ≠ baseline dominant_frame
 
+**Source Mix and Normalized Drift:**
+- `/drift/{topic}` returns current vs previous-window outlet composition and a
+  Jensen-Shannon divergence score so analysts can see when source composition
+  moved materially.
+- Each segment also includes `source_normalized`, a bounded fixed-panel view.
+  It computes per-outlet segment profiles for the current window, combines
+  observed fixed-panel outlets with equal weights, then compares that normalized
+  current profile to the existing segment baseline.
+- This is deliberately labeled as fixed-panel normalization, not causal
+  correction. It helps flag cases where raw drift may be driven by outlet mix,
+  while preserving the original raw drift fields for backward compatibility.
+
 **Design Decisions:**
 - **Why weighted averaging?** Articles aren't equally relevant to each segment.
 - **Why separate baselines per segment?** Segments have different signal distributions.
 - **Why seeded baselines?** Historical learning not implemented; first run establishes reference.
 - **Why 0.20/0.45 thresholds?** Domain expertise from Lakmoos; calibrate from data later.
+- **Why source-normalized drift?** It makes source-composition sensitivity
+  visible without hiding the raw media signal.
 
 **Extension Points:**
 - Change analysis window: Edit `days_back` parameter (default 7)
@@ -366,14 +383,15 @@ For complete endpoint documentation with examples, see [API.md](API.md).
 User Input: topic="energie"
     ↓
 [1] POST /collect?topic=energie
-    ├─ Bandit selects feeds: ["irozhlas", "ct24", "novinky"]
+    ├─ Select feeds via collection_mode=bandit|fixed_panel|all
     ├─ Fetch feeds concurrently (timeout: 10 sec per feed)
     ├─ Filter articles:
     │  ├─ Direct match: "energie" in title/summary
     │  └─ Semantic: embedding_similarity > 0.7
     ├─ Deduplicate by URL hash (SHA-256)
     ├─ Insert 24 articles into SQLite
-    └─ Response: {"articles_found": 24, "articles_stored": 24}
+    ├─ Record collection_runs + collection_feed_stats
+    └─ Response includes selected_feeds, accepted, duplicates, and reward_mode
     ↓
 [2] POST /extract?topic=energie
     ├─ Query 24 articles without signals
@@ -384,7 +402,6 @@ User Input: topic="energie"
     │  ├─ Normalize: clamp→[0,1], softmax segments
     │  ├─ Optional: Extract entities with spaCy
     │  └─ Store in signals table
-    ├─ Update bandit: +reward for irozhlas (found 12 articles)
     └─ Response: {"articles_processed": 24, "signals_stored": 24}
     ↓
 [3] GET /drift/energie?days_back=7
@@ -402,6 +419,13 @@ User Input: topic="energie"
     │     ├─ Current concern: 0.52, Baseline: 0.45, Δ: +0.07
     │     ├─ Frame shift: "neutral" → "opportunity" ✓
     │     └─ Drift magnitude: 0.18 → alert: "none"
+    ├─ Compute source mix:
+    │  ├─ Current outlet counts vs previous same-length window
+    │  └─ Jensen-Shannon divergence + warning
+    ├─ Compute source-normalized drift:
+    │  ├─ Per-outlet segment profiles
+    │  ├─ Equal weights across observed fixed-panel outlets
+    │  └─ normalization_effect explains raw vs normalized difference
     └─ Response: {"segments": [...drift data...]}
     ↓
 [4] GET /brief/energie

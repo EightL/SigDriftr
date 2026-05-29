@@ -30,14 +30,23 @@ async def run_pipeline(
     language: str | None = None,
     window_hours: int = Query(default=24, ge=1),
     min_cluster_size: int = Query(default=3, ge=1),
+    collection_mode: str | None = None,
+    reward_mode: str | None = None,
 ) -> dict[str, object]:
+    kwargs: dict[str, object] = {
+        "country": country,
+        "source": source,
+        "language": language,
+        "window_hours": window_hours,
+        "min_cluster_size": min_cluster_size,
+    }
+    if collection_mode is not None:
+        kwargs["collection_mode"] = collection_mode
+    if reward_mode is not None:
+        kwargs["reward_mode"] = reward_mode
     return await run_full_pipeline(
         topic,
-        country=country,
-        source=source,
-        language=language,
-        window_hours=window_hours,
-        min_cluster_size=min_cluster_size,
+        **kwargs,
     )
 
 

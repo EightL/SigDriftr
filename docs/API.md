@@ -13,7 +13,7 @@ SigDriftr exposes 8 REST endpoints for collecting articles, extracting signals, 
 
 ### 1. POST /collect - Collect Articles from RSS Feeds
 
-**Purpose:** Crawl Czech RSS feeds and store articles relevant to topic
+**Purpose:** Crawl eligible RSS feeds and store articles relevant to topic.
 
 **Request:**
 ```bash
@@ -22,22 +22,31 @@ curl -X POST "http://localhost:8000/collect?topic=energie"
 
 **Query Parameters:**
 - `topic` (string, required): Topic keyword(s), e.g., "energie", "zdravotnictvi"
+- `country` (string, optional): `CZ`, `DE`, or `GLOBAL`
+- `source` (string, optional): specific outlet id
+- `collection_mode` (string, optional): `bandit` (default), `all`, or `fixed_panel`
+- `reward_mode` (string, optional): `yield` (default, non-LLM) or `signal` (experimental)
 
 **Response (200 OK):**
 ```json
 {
   "topic": "energie",
-  "articles_found": 24,
-  "articles_stored": 22,
-  "feeds_selected": 3,
-  "timestamp": "2026-03-18T17:39:00Z"
+  "inserted": 22,
+  "extracted": 22,
+  "rewards_recorded": 0,
+  "collection_mode": "bandit",
+  "reward_mode": "yield",
+  "selected_feeds": ["irozhlas", "ct24", "e15"],
+  "accepted": 24,
+  "duplicates": 2
 }
 ```
 
 **Notes:**
 - Two-pass filtering: direct string match + semantic similarity (if available)
 - Articles deduplicated by URL hash (SHA-256)
-- Feed selection uses LinUCB bandit (adaptive per topic)
+- `bandit` selection uses LinUCB; `fixed_panel` and `all` are available for reproducible eval/demo runs
+- Default bandit rewards use non-LLM article yield, relevance, and duplicate-adjusted collection results
 - Concurrent feed fetching (timeout: 10 sec per feed)
 - Time: 2-5 minutes depending on feed latency
 
@@ -74,7 +83,7 @@ curl -X POST "http://localhost:8000/extract?topic=energie"
 - Extracts article-level behavioral signals, independent segment relevance, and
   normalized segment aggregation shares
 - Optional named entity enrichment (spaCy, if available)
-- Updates feed bandit rewards based on signal density
+- Does not update feed bandit rewards by default. Signal-based rewards are available only when explicitly enabled as experimental behavior.
 - Time: 1-2 minutes for ~20 articles (~30-50ms per article)
 
 **Signal Schema Extracted:**
@@ -222,7 +231,19 @@ curl "http://localhost:8000/drift/energie?days_back=7"
 ```json
 {
   "topic": "energie",
-  "computed_at": "2026-03-18T17:50:00Z",
+  "days_back": 7,
+  "source_mix": {
+    "current": {
+      "article_count": 12,
+      "article_count_by_outlet": {"irozhlas": 7, "ct24": 5}
+    },
+    "reference": {
+      "article_count": 10,
+      "article_count_by_outlet": {"irozhlas": 4, "ct24": 6}
+    },
+    "jensen_shannon_divergence": 0.0312,
+    "warning": "none"
+  },
   "segments": [
     {
       "segment": "young_urban",
@@ -244,6 +265,20 @@ curl "http://localhost:8000/drift/energie?days_back=7"
         "avoidance_signals": 0.03
       },
       "drift_magnitude": 0.18,
+      "source_normalized": {
+        "status": "partial_panel",
+        "panel_outlets": ["irozhlas", "ct24", "idnes", "e15"],
+        "observed_outlets": ["irozhlas", "ct24"],
+        "missing_outlets": ["idnes", "e15"],
+        "current": {
+          "concern_level": 0.49,
+          "purchase_intent": 0.40,
+          "avoidance_signals": 0.26
+        },
+        "drift_magnitude": 0.14,
+        "normalization_effect": 0.04,
+        "interpretation": "similar_to_raw"
+      },
       "alert_level": "none",
       "frame_shift": true,
       "article_count": 12,
@@ -265,7 +300,10 @@ curl "http://localhost:8000/drift/energie?days_back=7"
 - On subsequent runs, compares to stored baseline
 - Drift magnitude = 0.333 * |Δ concern| + 0.333 * |Δ purchase| + 0.334 * |Δ avoidance|
 - Frame shift indicates change in dominant narrative
-- Confidence reflects article count (higher = more data)
+- Confidence is a coverage/baseline readiness heuristic, not calibrated correctness
+- Source mix reports outlet composition for the current window against the previous same-length window
+- `source_normalized` is a bounded fixed-panel comparison. It recomputes the current segment profile by first averaging per outlet, then applying equal weights across observed outlets in the configured fixed panel. It is useful for detecting when raw drift may be inflated by outlet mix, but it is not a causal correction and does not replace raw drift.
+- `source_normalized.status` can be `ready`, `partial_panel`, `no_panel_overlap`, or `missing_baseline`.
 
 **Errors:**
 - 404: No signals for topic

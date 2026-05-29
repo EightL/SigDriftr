@@ -278,6 +278,26 @@ def reward_from_signals(topic: str, signals: dict) -> float:
     return round(max(0.0, min(1.0, reward)), 4)
 
 
+def reward_from_yield(
+    *,
+    accepted_count: int,
+    avg_relevance_score: float = 0.0,
+    duplicate_count: int = 0,
+    fetch_success: bool = True,
+    max_expected_articles: int = 8,
+) -> float:
+    if not fetch_success:
+        return 0.0
+
+    accepted = max(0, int(accepted_count))
+    duplicates = max(0, int(duplicate_count))
+    relevance = max(0.0, min(1.0, float(avg_relevance_score or 0.0)))
+    yield_score = min(1.0, accepted / max(1, int(max_expected_articles)))
+    duplicate_penalty = min(0.35, duplicates / max(1, accepted + duplicates) * 0.35)
+    reward = 0.70 * yield_score + 0.30 * relevance - duplicate_penalty
+    return round(max(0.0, min(1.0, reward)), 4)
+
+
 def record_signal_reward(
     outlet: str,
     topic: str,
@@ -286,6 +306,26 @@ def record_signal_reward(
     feed: dict | None = None,
 ) -> float:
     reward = reward_from_signals(topic, signals)
+    return update_feed_reward(outlet, topic, reward, when=when, feed=feed)
+
+
+def record_yield_reward(
+    outlet: str,
+    topic: str,
+    *,
+    accepted_count: int,
+    avg_relevance_score: float = 0.0,
+    duplicate_count: int = 0,
+    fetch_success: bool = True,
+    when: datetime | str | None = None,
+    feed: dict | None = None,
+) -> float:
+    reward = reward_from_yield(
+        accepted_count=accepted_count,
+        avg_relevance_score=avg_relevance_score,
+        duplicate_count=duplicate_count,
+        fetch_success=fetch_success,
+    )
     return update_feed_reward(outlet, topic, reward, when=when, feed=feed)
 
 

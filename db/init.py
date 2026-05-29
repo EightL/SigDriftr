@@ -11,6 +11,63 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 _local = threading.local()
 
 
+def _ensure_collection_schema(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS collection_runs (
+            run_id           TEXT PRIMARY KEY,
+            topic            TEXT NOT NULL,
+            country          TEXT NOT NULL DEFAULT '',
+            source           TEXT NOT NULL DEFAULT '',
+            collection_mode  TEXT NOT NULL,
+            reward_mode      TEXT NOT NULL,
+            eligible_feeds   INTEGER NOT NULL DEFAULT 0,
+            selected_feeds   INTEGER NOT NULL DEFAULT 0,
+            inserted         INTEGER NOT NULL DEFAULT 0,
+            accepted         INTEGER NOT NULL DEFAULT 0,
+            duplicates       INTEGER NOT NULL DEFAULT 0,
+            started_at       TEXT NOT NULL,
+            completed_at     TEXT NOT NULL,
+            duration_s       REAL NOT NULL DEFAULT 0.0
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_collection_runs_scope_completed
+        ON collection_runs(topic, country, source, completed_at DESC)
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS collection_feed_stats (
+            id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id              TEXT NOT NULL REFERENCES collection_runs(run_id),
+            outlet              TEXT NOT NULL,
+            country             TEXT NOT NULL DEFAULT '',
+            language            TEXT,
+            selected            INTEGER NOT NULL DEFAULT 1,
+            fetch_success       INTEGER NOT NULL DEFAULT 0,
+            entries_seen        INTEGER NOT NULL DEFAULT 0,
+            candidates          INTEGER NOT NULL DEFAULT 0,
+            accepted            INTEGER NOT NULL DEFAULT 0,
+            inserted            INTEGER NOT NULL DEFAULT 0,
+            duplicates          INTEGER NOT NULL DEFAULT 0,
+            avg_relevance_score REAL NOT NULL DEFAULT 0.0,
+            reward              REAL NOT NULL DEFAULT 0.0,
+            error_message       TEXT,
+            created_at          TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_collection_feed_stats_run
+        ON collection_feed_stats(run_id, outlet)
+        """
+    )
+
+
 def _ensure_cluster_schema(conn: sqlite3.Connection) -> None:
     conn.execute(
         """
@@ -650,6 +707,7 @@ def get_conn() -> sqlite3.Connection:
         _ensure_cluster_schema(conn)
         _ensure_cluster_signal_schema(conn)
         _ensure_cluster_drift_schema(conn)
+        _ensure_collection_schema(conn)
         run_migrations(conn)
         conn.commit()
         _local.conn = conn

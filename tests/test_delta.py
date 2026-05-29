@@ -3,7 +3,7 @@ import argparse
 import hashlib
 import sys
 import tempfile
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
 import db.init
@@ -36,16 +36,18 @@ def insert_article_with_signal(
     seg_family: float,
     seg_senior: float,
     seg_b2b: float,
+    outlet: str = "unit-test",
 ) -> None:
     conn = db.init.get_conn()
     conn.execute(
         """
         INSERT INTO articles
         (id, outlet, title, summary, url, topic, published_at, fetched_at)
-        VALUES (?, 'unit-test', ?, '', ?, ?, ?, ?)
+        VALUES (?, ?, ?, '', ?, ?, ?, ?)
         """,
         (
             article_id,
+            outlet,
             article_id,
             f"https://example.test/{article_id}",
             topic,
@@ -356,6 +358,140 @@ def test_empty_window_returns_no_data_alerts() -> None:
         assert all(entry["status"] == "no_data" for entry in drift)
     finally:
         temp_dir.cleanup()
+
+
+def test_compute_drift_reports_source_mix_metadata() -> None:
+    temp_dir = setup_temp_db()
+    try:
+        seed_baselines(["inflace"])
+        for index in range(3):
+            insert_article_with_signal(
+                article_id=f"current-a-{index}",
+                topic="inflace",
+                concern=0.7,
+                purchase=0.2,
+                avoidance=0.3,
+                frame="fear",
+                seg_young_urban=1.0,
+                seg_family=0.0,
+                seg_senior=0.0,
+                seg_b2b=0.0,
+                outlet="alpha",
+            )
+        for index in range(2):
+            insert_article_with_signal(
+                article_id=f"current-b-{index}",
+                topic="inflace",
+                concern=0.6,
+                purchase=0.2,
+                avoidance=0.3,
+                frame="fear",
+                seg_young_urban=1.0,
+                seg_family=0.0,
+                seg_senior=0.0,
+                seg_b2b=0.0,
+                outlet="beta",
+            )
+
+        previous_ts = (
+            datetime.now(timezone.utc) - timedelta(days=10)
+        ).replace(microsecond=0).isoformat()
+        conn = db.init.get_conn()
+        conn.execute(
+            """
+            INSERT INTO articles
+            (id, outlet, title, summary, url, topic, published_at, fetched_at)
+            VALUES ('previous-gamma', 'gamma', 'Previous', '',
+                    'https://example.test/previous-gamma', 'inflace', ?, ?)
+            """,
+            (previous_ts, previous_ts),
+        )
+        conn.commit()
+
+        drift = compute_drift("inflace", days_back=7)
+        source_mix = drift[0]["source_mix"]
+    finally:
+        temp_dir.cleanup()
+
+    assert source_mix["current"]["article_count_by_outlet"] == {"alpha": 3, "beta": 2}
+    assert source_mix["reference"]["article_count_by_outlet"] == {"gamma": 1}
+    assert source_mix["jensen_shannon_divergence"] is not None
+    assert source_mix["warning"] in {"low_sample", "outlet_mix_shift"}
+
+
+def test_source_normalized_drift_dampens_outlet_mix_skew() -> None:
+    temp_dir = setup_temp_db()
+    try:
+        seed_baselines(["inflace"])
+        for index in range(9):
+            insert_article_with_signal(
+                article_id=f"irozhlas-skew-{index}",
+                topic="inflace",
+                concern=0.9,
+                purchase=0.3,
+                avoidance=0.2,
+                frame="fear",
+                seg_young_urban=1.0,
+                seg_family=0.0,
+                seg_senior=0.0,
+                seg_b2b=0.0,
+                outlet="irozhlas",
+            )
+        insert_article_with_signal(
+            article_id="e15-counterweight",
+            topic="inflace",
+            concern=0.1,
+            purchase=0.3,
+            avoidance=0.2,
+            frame="neutral",
+            seg_young_urban=1.0,
+            seg_family=0.0,
+            seg_senior=0.0,
+            seg_b2b=0.0,
+            outlet="e15",
+        )
+
+        drift = compute_drift("inflace", days_back=7, country="CZ")
+        young_urban = next(entry for entry in drift if entry["segment"] == "young_urban")
+        normalized = young_urban["source_normalized"]
+    finally:
+        temp_dir.cleanup()
+
+    assert young_urban["current"]["concern_level"] == 0.82
+    assert young_urban["drift_magnitude"] > 0.15
+    assert normalized["status"] == "partial_panel"
+    assert normalized["observed_outlets"] == ["irozhlas", "e15"]
+    assert normalized["current"]["concern_level"] == 0.5
+    assert normalized["drift_magnitude"] < young_urban["drift_magnitude"]
+    assert normalized["normalization_effect"] > 0.1
+    assert normalized["interpretation"] == "raw_drift_partly_source_mix"
+
+
+def test_source_normalized_drift_reports_no_panel_overlap() -> None:
+    temp_dir = setup_temp_db()
+    try:
+        seed_baselines(["inflace"])
+        insert_article_with_signal(
+            article_id="off-panel",
+            topic="inflace",
+            concern=0.9,
+            purchase=0.3,
+            avoidance=0.2,
+            frame="fear",
+            seg_young_urban=1.0,
+            seg_family=0.0,
+            seg_senior=0.0,
+            seg_b2b=0.0,
+            outlet="off_panel",
+        )
+
+        drift = compute_drift("inflace", days_back=7, country="CZ")
+        young_urban = next(entry for entry in drift if entry["segment"] == "young_urban")
+    finally:
+        temp_dir.cleanup()
+
+    assert young_urban["source_normalized"]["status"] == "no_panel_overlap"
+    assert young_urban["source_normalized"]["current"] is None
 
 
 def test_compute_drift_reports_segment_status_levels() -> None:

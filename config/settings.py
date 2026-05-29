@@ -33,6 +33,12 @@ HIGH_BRIEF_CONFIDENCE = 0.7
 BANDIT_ALPHA = 0.85
 BANDIT_TIME_BUCKET_HOURS = 6
 BANDIT_MAX_FEEDS_PER_CRAWL = 6
+BANDIT_REWARD_MODE = (
+    os.environ.get("BANDIT_REWARD_MODE", "yield").strip().lower() or "yield"
+)
+COLLECTION_MODE = (
+    os.environ.get("COLLECTION_MODE", "bandit").strip().lower() or "bandit"
+)
 
 CRAWL_FETCH_CONCURRENCY = 4
 CRAWL_FEED_TIMEOUT_SECONDS = 15

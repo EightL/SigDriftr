@@ -7,10 +7,11 @@ import time
 from datetime import datetime, timezone
 
 from brief.generator import generate_brief_cached, generate_hierarchical_brief_cached
+from config.settings import BANDIT_REWARD_MODE, COLLECTION_MODE
 from db.topic_queries import topic_filter_sql
 from db.init import get_conn
 from ingestion.bandit import record_signal_reward
-from ingestion.crawler import _crawl_async
+from ingestion.crawler import _crawl_async_report
 
 
 PipelineScopeKey = tuple[str, str, str, str | None]
@@ -257,9 +258,20 @@ async def run_collection_cycle(
     topic: str,
     country: str = "",
     source: str = "",
-) -> dict[str, int | str]:
+    *,
+    collection_mode: str | None = None,
+    reward_mode: str | None = None,
+) -> dict[str, object]:
     crawl_start = datetime.now(timezone.utc).isoformat()
-    inserted = await _crawl_async(topic, country=country, source=source)
+    resolved_reward_mode = (reward_mode or BANDIT_REWARD_MODE).strip().lower() or "yield"
+    report = await _crawl_async_report(
+        topic,
+        country=country,
+        source=source,
+        collection_mode=collection_mode or COLLECTION_MODE,
+        reward_mode=resolved_reward_mode,
+    )
+    inserted = report.inserted
     processed = 0
     rewards_recorded = 0
 
@@ -267,7 +279,8 @@ async def run_collection_cycle(
         from extraction.extractor import run_extraction
 
         processed = run_extraction(topic, record_bandit_reward=False)
-        rewards_recorded = record_recent_signal_rewards(topic, crawl_start)
+        if resolved_reward_mode == "signal":
+            rewards_recorded = record_recent_signal_rewards(topic, crawl_start)
         if processed > 0:
             from brief.generator import clear_brief_cache
 
@@ -280,6 +293,14 @@ async def run_collection_cycle(
         "topic": topic,
         "country": country,
         "source": source,
+        "collection_mode": report.collection_mode,
+        "reward_mode": report.reward_mode,
+        "run_id": report.run_id,
+        "eligible_feeds": report.eligible_feeds,
+        "selected_feeds": report.selected_feeds,
+        "accepted": report.accepted,
+        "duplicates": report.duplicates,
+        "feed_stats": [item for item in report.to_dict()["feed_stats"]],
     }
 
 
@@ -287,11 +308,22 @@ def run_collection_cycle_sync(
     topic: str,
     country: str = "",
     source: str = "",
-) -> dict[str, int | str]:
+    *,
+    collection_mode: str | None = None,
+    reward_mode: str | None = None,
+) -> dict[str, object]:
     try:
         asyncio.get_running_loop()
     except RuntimeError:
-        return asyncio.run(run_collection_cycle(topic, country=country, source=source))
+        return asyncio.run(
+            run_collection_cycle(
+                topic,
+                country=country,
+                source=source,
+                collection_mode=collection_mode,
+                reward_mode=reward_mode,
+            )
+        )
 
     raise RuntimeError(
         "run_collection_cycle_sync() cannot run inside an active event loop; "
@@ -307,6 +339,8 @@ async def run_full_pipeline(
     language: str | None = None,
     window_hours: int = 24,
     min_cluster_size: int = 3,
+    collection_mode: str | None = None,
+    reward_mode: str | None = None,
 ) -> dict[str, object]:
     from clustering.clustering_service import run_clustering
     from delta.cluster_drift import run_cluster_drift
@@ -323,6 +357,8 @@ async def run_full_pipeline(
         topic,
         country=normalized_country,
         source=normalized_source,
+        collection_mode=collection_mode,
+        reward_mode=reward_mode,
     )
     collect_duration = round(time.perf_counter() - collect_started, 4)
 
@@ -521,6 +557,8 @@ async def run_full_pipeline(
             "country": normalized_country,
             "source": normalized_source,
             "language": normalized_language,
+            "collection_mode": str(collect_result.get("collection_mode", "")),
+            "reward_mode": str(collect_result.get("reward_mode", "")),
         },
         "run_id": cluster_result.get("run_id"),
         "generated_at": _utc_now_iso(),

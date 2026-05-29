@@ -2,6 +2,7 @@ import json
 from datetime import datetime, timezone
 
 from config.feeds import FEEDS
+from config.settings import BANDIT_REWARD_MODE
 from db.init import get_conn
 from db.topic_queries import topic_filter_sql
 from extraction.entities import extract_entities, normalize_entity_key
@@ -22,7 +23,10 @@ def _topic_relevance_label(score: float | None) -> str:
     return "2"
 
 
-def run_extraction(topic: str, record_bandit_reward: bool = True) -> int:
+def run_extraction(topic: str, record_bandit_reward: bool | None = None) -> int:
+    if record_bandit_reward is None:
+        record_bandit_reward = BANDIT_REWARD_MODE == "signal"
+
     conn = get_conn()
     topic_sql, topic_params = topic_filter_sql("a", topic)
     rows = conn.execute(

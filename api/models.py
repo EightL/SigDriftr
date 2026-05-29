@@ -87,6 +87,8 @@ class DriftSegmentResponse(BaseModel):
     baseline_sample_count: int | None = None
     baseline_age_days: int | None = None
     status: SegmentStatus | None = None
+    source_mix: dict[str, object] | None = None
+    source_normalized: dict[str, object] | None = None
     domain: str | None = "generic"
     relevant_fields: list[str] | None = None
 
@@ -94,6 +96,7 @@ class DriftSegmentResponse(BaseModel):
 class DriftResponse(BaseModel):
     topic: str
     days_back: int
+    source_mix: dict[str, object] | None = None
     segments: list[DriftSegmentResponse]
 
 
@@ -305,6 +308,8 @@ class ScopeResponse(BaseModel):
     country: str = ""
     source: str = ""
     language: str | None = None
+    collection_mode: str | None = None
+    reward_mode: str | None = None
 
 
 class PipelineStageStatus(BaseModel):

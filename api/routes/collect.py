@@ -11,5 +11,15 @@ async def collect(
     topic: str,
     country: str = "",
     source: str = "",
-) -> dict[str, int | str]:
-    return await run_collection_cycle(topic, country=country, source=source)
+    collection_mode: str | None = None,
+    reward_mode: str | None = None,
+) -> dict[str, object]:
+    kwargs: dict[str, object] = {"country": country, "source": source}
+    if collection_mode is not None:
+        kwargs["collection_mode"] = collection_mode
+    if reward_mode is not None:
+        kwargs["reward_mode"] = reward_mode
+    return await run_collection_cycle(
+        topic,
+        **kwargs,
+    )

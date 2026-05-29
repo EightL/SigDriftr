@@ -11,7 +11,9 @@ import pytest
 from ingestion.bandit import (
     get_bandit_snapshot,
     record_signal_reward,
+    record_yield_reward,
     reward_from_signals,
+    reward_from_yield,
     select_feeds,
 )
 from ingestion.crawler import crawl
@@ -65,6 +67,22 @@ def test_reward_from_signals_uses_domain_weights() -> None:
     )
 
     assert reward == 0.68
+
+
+def test_reward_from_yield_uses_non_llm_collection_features() -> None:
+    reward = reward_from_yield(
+        accepted_count=4,
+        avg_relevance_score=0.8,
+        duplicate_count=1,
+        fetch_success=True,
+    )
+
+    assert reward == 0.52
+    assert reward_from_yield(
+        accepted_count=4,
+        avg_relevance_score=0.8,
+        fetch_success=False,
+    ) == 0.0
 
 
 def test_select_feeds_shifts_toward_high_reward_sources() -> None:
@@ -265,7 +283,7 @@ def test_run_extraction_updates_bandit_using_signal_rewards() -> None:
             "extraction.extractor.extract_signals",
             side_effect=fake_extract_signals,
         ), patch("extraction.extractor.extract_entities", return_value=[]):
-            processed = run_extraction("inflace")
+            processed = run_extraction("inflace", record_bandit_reward=True)
 
         irozhlas_snapshot = get_bandit_snapshot("irozhlas")
         idnes_snapshot = get_bandit_snapshot("idnes")
@@ -284,6 +302,68 @@ def test_run_extraction_updates_bandit_using_signal_rewards() -> None:
     assert irozhlas_snapshot["total_reward"] == 0.84
     assert idnes_snapshot["total_reward"] == 0.024
     assert [feed["outlet"] for feed in selected] == ["irozhlas", "idnes"]
+
+
+def test_run_extraction_does_not_update_bandit_by_default() -> None:
+    pytest.importorskip("tenacity")
+    from extraction.extractor import run_extraction
+
+    temp_dir = setup_temp_db()
+    try:
+        insert_article(
+            article_id="irozhlas-default",
+            topic="inflace",
+            outlet="irozhlas",
+            title="irozhlas-default",
+        )
+
+        with patch(
+            "extraction.extractor.extract_signals",
+            return_value={
+                "concern_level": 0.9,
+                "purchase_intent": 0.5,
+                "avoidance_signals": 0.2,
+                "dominant_frame": "fear",
+                "seg_young_urban": 0.25,
+                "seg_family": 0.25,
+                "seg_senior": 0.25,
+                "seg_b2b": 0.25,
+                "domain": "commerce",
+            },
+        ), patch("extraction.extractor.extract_entities", return_value=[]):
+            processed = run_extraction("inflace")
+
+        snapshot = get_bandit_snapshot("irozhlas")
+    finally:
+        cleanup_temp_db(temp_dir)
+
+    assert processed == 1
+    assert snapshot["pulls"] == 0
+
+
+def test_record_yield_reward_updates_bandit_without_signals() -> None:
+    temp_dir = setup_temp_db()
+    try:
+        feed = {
+            "outlet": "alpha",
+            "rss_url": "https://alpha.test/rss",
+            "affinity_tag": "mainstream",
+        }
+        reward = record_yield_reward(
+            "alpha",
+            "inflace",
+            accepted_count=8,
+            avg_relevance_score=0.9,
+            duplicate_count=0,
+            feed=feed,
+        )
+        snapshot = get_bandit_snapshot("alpha")
+    finally:
+        cleanup_temp_db(temp_dir)
+
+    assert reward == 0.97
+    assert snapshot["pulls"] == 1
+    assert snapshot["total_reward"] == 0.97
 
 
 def test_crawl_records_zero_reward_for_selected_feed_with_no_relevant_matches() -> None:

@@ -31,6 +31,12 @@ class SignalRecord(BaseModel):
     seg_family: float | None = None
     seg_senior: float | None = None
     seg_b2b: float | None = None
+    seg_young_urban_relevance: float | None = None
+    seg_family_relevance: float | None = None
+    seg_senior_relevance: float | None = None
+    seg_b2b_relevance: float | None = None
+    topic_relevance_score: float | None = None
+    topic_relevance: str | None = None
     raw_json: dict = Field(default_factory=dict)
     extracted_at: str
     segment_confidence: dict[str, SegmentConfidence] | None = None

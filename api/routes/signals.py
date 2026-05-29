@@ -61,7 +61,10 @@ def query_signals(
                s.article_id, a.title, a.outlet, a.country, a.language, a.url,
                s.concern_level, s.purchase_intent,
                s.avoidance_signals, s.dominant_frame, s.seg_young_urban,
-               s.seg_family, s.seg_senior, s.seg_b2b, s.raw_json, s.extracted_at
+               s.seg_family, s.seg_senior, s.seg_b2b,
+               s.seg_young_urban_relevance, s.seg_family_relevance,
+               s.seg_senior_relevance, s.seg_b2b_relevance,
+               s.raw_json, s.extracted_at
         FROM signals s
         JOIN articles a ON a.id = s.article_id
         WHERE 1 = 1
@@ -84,7 +87,7 @@ def query_signals(
 
     records: list[dict] = []
     for row in rows:
-        raw_json = json.loads(row[15]) if row[15] else {}
+        raw_json = json.loads(row[19]) if row[19] else {}
         domain = raw_json.get("domain", "generic")
         records.append(
             {
@@ -105,8 +108,14 @@ def query_signals(
                 "seg_family": row[12],
                 "seg_senior": row[13],
                 "seg_b2b": row[14],
+                "seg_young_urban_relevance": row[15],
+                "seg_family_relevance": row[16],
+                "seg_senior_relevance": row[17],
+                "seg_b2b_relevance": row[18],
+                "topic_relevance_score": raw_json.get("topic_relevance_score"),
+                "topic_relevance": raw_json.get("topic_relevance"),
                 "raw_json": raw_json,
-                "extracted_at": row[16],
+                "extracted_at": row[20],
                 "segment_confidence": segment_confidence,
             }
         )

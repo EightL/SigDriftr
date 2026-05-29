@@ -354,6 +354,20 @@ def run_migrations(conn: sqlite3.Connection) -> None:
                 """
             )
 
+    if "signals" in table_names:
+        signal_columns = {
+            row[1]
+            for row in conn.execute("PRAGMA table_info(signals)").fetchall()
+        }
+        for column in [
+            "seg_young_urban_relevance",
+            "seg_family_relevance",
+            "seg_senior_relevance",
+            "seg_b2b_relevance",
+        ]:
+            if column not in signal_columns:
+                conn.execute(f"ALTER TABLE signals ADD COLUMN {column} REAL")
+
     columns = {
         row[1]
         for row in conn.execute("PRAGMA table_info(baselines)").fetchall()
@@ -513,6 +527,10 @@ def get_conn() -> sqlite3.Connection:
                 seg_family         REAL,
                 seg_senior         REAL,
                 seg_b2b            REAL,
+                seg_young_urban_relevance REAL,
+                seg_family_relevance      REAL,
+                seg_senior_relevance      REAL,
+                seg_b2b_relevance         REAL,
                 raw_json           TEXT,
                 extracted_at       TEXT NOT NULL,
                 FOREIGN KEY (article_id) REFERENCES articles(id)

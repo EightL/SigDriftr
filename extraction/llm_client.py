@@ -7,8 +7,37 @@ import urllib.parse
 import urllib.request
 
 from config.domains import DOMAIN_SIGNAL_KEYS, get_domain_config, topic_to_domain
-from dotenv import load_dotenv
-from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
+
+try:
+    from tenacity import (
+        retry,
+        retry_if_exception_type,
+        stop_after_attempt,
+        wait_exponential,
+    )
+except ModuleNotFoundError:
+
+    def retry(*args, **kwargs):
+        def decorator(func):
+            return func
+
+        return decorator
+
+    def retry_if_exception_type(*args, **kwargs):
+        return None
+
+    def stop_after_attempt(*args, **kwargs):
+        return None
+
+    def wait_exponential(*args, **kwargs):
+        return None
+
+try:
+    from dotenv import load_dotenv
+except ModuleNotFoundError:
+
+    def load_dotenv(*args, **kwargs):
+        return False
 
 
 load_dotenv(dotenv_path=Path(__file__).resolve().parent.parent / ".env")
@@ -33,6 +62,8 @@ OLLAMA_MODEL = "qwen2.5:7b-instruct"
 OLLAMA_FALLBACK_MODEL = "gemma3:1b"
 OLLAMA_TIMEOUT_SECONDS = 120
 VALID_FRAMES = {"fear", "opportunity", "conflict", "neutral"}
+ARTICLE_BODY_PROMPT_CHARS = 3000
+SEGMENT_KEYS = ["seg_young_urban", "seg_family", "seg_senior", "seg_b2b"]
 AFFINITY_PRIORS = {
     "mainstream": {
         "seg_young_urban": 0.30,
@@ -71,6 +102,7 @@ You are a behavioral analyst specializing in Czech media. Analyze the article be
 Topic: {topic}
 Article title: {title}
 Article summary: {summary}
+Article body excerpt: {body}
 
 Domain guidance: {domain_hint}
 
@@ -80,15 +112,15 @@ Output ONLY this JSON object (nothing before or after it):
   "purchase_intent": 0.0,
   "avoidance_signals": 0.0,
   "dominant_frame": "<one of: fear|opportunity|conflict|neutral>",
-  "seg_young_urban": 0.0,
-  "seg_family": 0.0,
-  "seg_senior": 0.0,
-  "seg_b2b": 0.0
+  "seg_young_urban_relevance": 0.0,
+  "seg_family_relevance": 0.0,
+  "seg_senior_relevance": 0.0,
+  "seg_b2b_relevance": 0.0
 }}
 
 Rules:
 - All numeric fields are floats between 0.0 and 1.0.
-- seg_* fields represent the relative relevance to each audience segment and should sum to approximately 1.0.
+- seg_*_relevance fields are independent relevance scores. They do not need to sum to 1.0.
 - dominant_frame must be exactly one of: fear, opportunity, conflict, neutral.
 """.strip()
 
@@ -101,29 +133,34 @@ DEFAULT_SIGNALS = {
     "seg_family": 0.25,
     "seg_senior": 0.25,
     "seg_b2b": 0.25,
+    "seg_young_urban_relevance": 0.25,
+    "seg_family_relevance": 0.25,
+    "seg_senior_relevance": 0.25,
+    "seg_b2b_relevance": 0.25,
 }
 
 
 def _softmax_segments(signals: dict) -> dict:
-    """Normalize seg_* fields so they sum to 1.0 using softmax."""
-    seg_keys = ["seg_young_urban", "seg_family", "seg_senior", "seg_b2b"]
-    raw = [signals.get(key, 0.25) for key in seg_keys]
+    """Derive aggregation shares from independent segment relevance scores."""
+    raw = [signals.get(f"{key}_relevance", signals.get(key, 0.25)) for key in SEGMENT_KEYS]
     exps = [math.exp(value * 5) for value in raw]
     total = sum(exps)
     normed = [value / total for value in exps]
-    for key, value in zip(seg_keys, normed):
+    for key, value in zip(SEGMENT_KEYS, normed):
         signals[key] = round(value, 4)
+        signals[f"{key}_share"] = signals[key]
     return signals
 
 
 def _apply_affinity_prior(signals: dict, affinity_tag: str) -> dict:
-    """Blend LLM segment scores with the feed's affinity prior."""
+    """Blend derived segment shares with the feed's affinity prior."""
     prior = AFFINITY_PRIORS.get(affinity_tag)
     if prior is None:
         return signals
 
-    for key in ["seg_young_urban", "seg_family", "seg_senior", "seg_b2b"]:
+    for key in SEGMENT_KEYS:
         signals[key] = round(0.7 * signals.get(key, 0.25) + 0.3 * prior[key], 4)
+        signals[f"{key}_share"] = signals[key]
     return signals
 
 
@@ -137,20 +174,42 @@ def _clamp_score(value: object, default: float) -> float:
 def _normalize_signals(result: dict | None) -> dict:
     normalized = dict(DEFAULT_SIGNALS)
     if isinstance(result, dict):
-        for key, default in DEFAULT_SIGNALS.items():
-            if key == "dominant_frame":
-                frame = str(result.get(key, default)).strip().lower()
-                normalized[key] = frame if frame in VALID_FRAMES else default
-            else:
-                normalized[key] = _clamp_score(result.get(key), default)
+        for key in ["concern_level", "purchase_intent", "avoidance_signals"]:
+            normalized[key] = _clamp_score(result.get(key), DEFAULT_SIGNALS[key])
+
+        frame = str(result.get("dominant_frame", DEFAULT_SIGNALS["dominant_frame"])).strip().lower()
+        normalized["dominant_frame"] = (
+            frame if frame in VALID_FRAMES else DEFAULT_SIGNALS["dominant_frame"]
+        )
+
+        for key in SEGMENT_KEYS:
+            relevance_key = f"{key}_relevance"
+            normalized[relevance_key] = _clamp_score(
+                result.get(relevance_key, result.get(key)),
+                DEFAULT_SIGNALS[relevance_key],
+            )
     return normalized
 
 
-def _build_prompt(title: str, summary: str, topic: str, domain_hint: str) -> str:
+def _body_excerpt(body: str) -> str:
+    collapsed = " ".join((body or "").split())
+    if not collapsed:
+        return ""
+    return collapsed[:ARTICLE_BODY_PROMPT_CHARS]
+
+
+def _build_prompt(
+    title: str,
+    summary: str,
+    topic: str,
+    domain_hint: str,
+    body: str = "",
+) -> str:
     return PROMPT_TEMPLATE.format(
         topic=topic,
         title=title,
         summary=summary,
+        body=_body_excerpt(body),
         domain_hint=domain_hint,
     )
 
@@ -253,8 +312,14 @@ def _ollama_request(payload: bytes) -> dict | None:
     return _parse_json_text(raw)
 
 
-def _try_google_gemma(title: str, summary: str, topic: str, domain_hint: str) -> dict | None:
-    prompt = _build_prompt(title, summary, topic, domain_hint)
+def _try_google_gemma(
+    title: str,
+    summary: str,
+    topic: str,
+    domain_hint: str,
+    body: str = "",
+) -> dict | None:
+    prompt = _build_prompt(title, summary, topic, domain_hint, body=body)
     try:
         return _google_gemma_request(prompt)
     except Exception:
@@ -267,8 +332,9 @@ def _try_ollama(
     model: str,
     topic: str,
     domain_hint: str,
+    body: str = "",
 ) -> dict | None:
-    prompt = _build_prompt(title, summary, topic, domain_hint)
+    prompt = _build_prompt(title, summary, topic, domain_hint, body=body)
     payload = json.dumps(
         {"model": model, "prompt": prompt, "stream": False, "format": "json"}
     ).encode("utf-8")
@@ -278,9 +344,15 @@ def _try_ollama(
         return None
 
 
-def _ollama_fallback(title: str, summary: str, topic: str, domain_hint: str) -> dict | None:
+def _ollama_fallback(
+    title: str,
+    summary: str,
+    topic: str,
+    domain_hint: str,
+    body: str = "",
+) -> dict | None:
     """Fallback to a second Ollama model to keep inference GPU-backed."""
-    return _try_ollama(title, summary, OLLAMA_FALLBACK_MODEL, topic, domain_hint)
+    return _try_ollama(title, summary, OLLAMA_FALLBACK_MODEL, topic, domain_hint, body=body)
 
 
 def extract_signals(
@@ -288,6 +360,7 @@ def extract_signals(
     summary: str,
     affinity_tag: str = "mainstream",
     topic: str = "",
+    body: str = "",
 ) -> dict:
     domain = topic_to_domain(topic)
     domain_hint = str(get_domain_config(domain)["prompt_hint"])
@@ -296,17 +369,17 @@ def extract_signals(
     model = ""
 
     if provider in {"google", "google_gemma", "gemma"}:
-        result = _try_google_gemma(title, summary, topic, domain_hint)
+        result = _try_google_gemma(title, summary, topic, domain_hint, body=body)
         if result is not None:
             model = GOOGLE_GEMMA_MODEL
         else:
             provider = "ollama"
 
     if result is None:
-        result = _try_ollama(title, summary, OLLAMA_MODEL, topic, domain_hint)
+        result = _try_ollama(title, summary, OLLAMA_MODEL, topic, domain_hint, body=body)
         model = OLLAMA_MODEL
     if result is None:
-        result = _ollama_fallback(title, summary, topic, domain_hint)
+        result = _ollama_fallback(title, summary, topic, domain_hint, body=body)
         model = OLLAMA_FALLBACK_MODEL
     signals = _normalize_signals(result)
     signals = _softmax_segments(signals)
@@ -314,4 +387,12 @@ def extract_signals(
     signals = _apply_domain_mask(signals, domain)
     signals["extractor_provider"] = provider
     signals["extractor_model"] = model
+    signals["schema_version"] = "article-signal-v2"
+    signals["input_text"] = {
+        "title_chars": len(title or ""),
+        "summary_chars": len(summary or ""),
+        "body_chars": len(body or ""),
+        "body_prompt_chars": len(_body_excerpt(body)),
+        "body_truncated": len(" ".join((body or "").split())) > ARTICLE_BODY_PROMPT_CHARS,
+    }
     return signals

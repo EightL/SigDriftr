@@ -9,6 +9,7 @@ eval/annotations/*.csv
 !eval/annotations/.gitkeep
 !eval/annotations/czenec_batch_200.csv
 !eval/annotations/czenec_batch_200_four_model_majority_labeled.csv
+!eval/annotations/czech_batch_200_semi_gold.csv
 eval/predictions/*.json
 eval/reports/*.json
 !eval/reports/czenec_batch_200_four_model_agreement.json

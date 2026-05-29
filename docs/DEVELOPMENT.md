@@ -309,9 +309,13 @@ SigDriftr/
 
 1. Edit `config/feeds.py`: Add `seg_new` to feed priors
 2. Edit `brief/models.py`: Add `seg_new` to signal schema
-3. Edit `extraction/llm_client.py`: Update LLM prompt
+3. Edit `extraction/llm_client.py`: Update `SEGMENT_KEYS`, `DEFAULT_SIGNALS`,
+   and the prompt to include both `seg_new_relevance` and the derived `seg_new`
+   aggregation share
 4. Edit `delta/mapper.py`: Add aggregation logic
-5. Test: Run `/extract` then `/drift`
+5. Edit `evaluation/weak_gold.py` and `docs/LABEL_GUIDE.md` if the segment
+   should be evaluated
+6. Test: Run `/extract`, `/drift`, and the semi-gold evaluator
 
 ### Change LLM Model
 
@@ -418,7 +422,8 @@ def extract_article_signals(title: str, summary: str) -> Dict[str, float]:
     
     Returns:
         Dict with keys: concern_level, purchase_intent, avoidance_signals,
-        dominant_frame, seg_young_urban, seg_family, seg_senior, seg_b2b
+        dominant_frame, seg_*_relevance, seg_young_urban, seg_family,
+        seg_senior, seg_b2b
     
     Raises:
         TimeoutError: If Ollama doesn't respond within 30 seconds

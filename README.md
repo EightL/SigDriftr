@@ -2,6 +2,7 @@
 
 Experimental FastAPI pipeline for RSS collection, LLM signal extraction,
 drift detection, storyline clustering, and short analyst brief generation.
+It analyzes media coverage drift, not direct public sentiment or behavior.
 
 ## Flow
 
@@ -47,6 +48,17 @@ pip install -r requirements-dev.txt
 pytest -q
 ```
 
+## Evaluation
+
+The current regression target is a 200-article CZE-NEC semi-gold baseline:
+`eval/annotations/czech_batch_200_semi_gold.csv`. It combines a human annotation
+pass with manual adjudication of the lowest-agreement model/human cases.
+
+```bash
+python scripts/evaluate_weak_gold.py \
+  --predictions eval/model_outputs/czenec_batch_200_chatgpt.json
+```
+
 ## Docker
 
 ```bash
@@ -70,4 +82,6 @@ and cluster signal extraction will not produce model-backed signals.
 
 - Technical design: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - Developer guide: [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)
-- Limitations and roadmap: [docs/concerns.md](docs/concerns.md)
+- Evaluation guide: [docs/EVALUATION.md](docs/EVALUATION.md)
+- Label guide: [docs/LABEL_GUIDE.md](docs/LABEL_GUIDE.md)
+- Limitations and roadmap: [concerns.md](concerns.md)

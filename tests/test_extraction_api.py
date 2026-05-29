@@ -36,17 +36,23 @@ def cleanup_temp_db(temp_dir: tempfile.TemporaryDirectory) -> None:
     temp_dir.cleanup()
 
 
-def insert_article(article_id: str, topic: str, outlet: str = "irozhlas") -> None:
+def insert_article(
+    article_id: str,
+    topic: str,
+    outlet: str = "irozhlas",
+    body: str | None = None,
+) -> None:
     conn = db.init.get_conn()
     conn.execute(
         """
         INSERT INTO articles
-        (id, outlet, title, summary, url, topic, published_at, fetched_at)
-        VALUES (?, ?, 'Title', 'Summary', ?, ?, ?, ?)
+        (id, outlet, title, summary, body, url, topic, published_at, fetched_at)
+        VALUES (?, ?, 'Title', 'Summary', ?, ?, ?, ?, ?)
         """,
         (
             article_id,
             outlet,
+            body,
             f"https://example.test/{article_id}",
             topic,
             RECENT_TS,
@@ -448,6 +454,67 @@ def test_run_extraction_uses_article_topic_when_processing_all_topics() -> None:
     assert raw_json["entities"] == [{"text": "Praha", "label": "GPE"}]
     assert entity_rows == [("Praha", "GPE")]
     mock_reward.assert_called_once()
+
+
+def test_run_extraction_passes_body_and_stores_relevance_fields() -> None:
+    from extraction import extractor
+
+    temp_dir = setup_temp_db()
+    try:
+        insert_article(
+            "article-body-pass",
+            "inflace",
+            body="Full extracted article text with detail.",
+        )
+        with patch(
+            "extraction.extractor.extract_signals",
+            return_value={
+                "concern_level": 0.6,
+                "purchase_intent": 0.0,
+                "avoidance_signals": 0.2,
+                "dominant_frame": "fear",
+                "seg_young_urban": 0.25,
+                "seg_family": 0.25,
+                "seg_senior": 0.25,
+                "seg_b2b": 0.25,
+                "seg_young_urban_relevance": 0.8,
+                "seg_family_relevance": 0.3,
+                "seg_senior_relevance": 0.1,
+                "seg_b2b_relevance": 0.2,
+                "domain": "commerce",
+                "irrelevant_fields": [],
+            },
+        ) as mock_extract, patch(
+            "extraction.extractor.extract_entities",
+            return_value=[],
+        ):
+            processed = extractor.run_extraction("inflace")
+
+        conn = db.init.get_conn()
+        row = conn.execute(
+            """
+            SELECT seg_young_urban_relevance, seg_family_relevance,
+                   seg_senior_relevance, seg_b2b_relevance, raw_json
+            FROM signals
+            WHERE article_id = ?
+            """,
+            ("article-body-pass",),
+        ).fetchone()
+        raw_json = json.loads(row[4])
+    finally:
+        cleanup_temp_db(temp_dir)
+
+    assert processed == 1
+    mock_extract.assert_called_once_with(
+        "Title",
+        "Summary",
+        affinity_tag="mainstream",
+        topic="inflace",
+        body="Full extracted article text with detail.",
+    )
+    assert row[:4] == (0.8, 0.3, 0.1, 0.2)
+    assert raw_json["topic_relevance_score"] == 1.0
+    assert raw_json["topic_relevance"] == "2"
 
 
 def test_ollama_request_parses_json_mode_response_directly() -> None:

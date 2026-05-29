@@ -13,17 +13,31 @@ system should be framed as exploratory media analysis.
 
 ## Current Validation Snapshot
 
-As of May 28, 2026, the repo has a first no-human weak-gold evaluation baseline:
+As of May 29, 2026, the repo has a 200-article semi-gold evaluation baseline:
 
 - Source batch: 200 CZE-NEC articles, balanced across `inflace`, `energie`,
   `zdravotnictvi`, and `politika`.
-- Labelers: ChatGPT, DeepSeek, hosted Google Gemma, and Claude.
-- Final artifact: `eval/annotations/czenec_batch_200_four_model_majority_labeled.csv`.
-- Agreement report: `eval/reports/czenec_batch_200_four_model_agreement.json`.
+- First-pass labelers: ChatGPT, DeepSeek, hosted Google Gemma, and Claude.
+- Human pass: `eval/annotations/czech_batch_200_human.md`.
+- Primary baseline: `eval/annotations/czech_batch_200_semi_gold.csv`.
+- Adjudication notes:
+  `eval/reports/czech_batch_200_semi_gold_adjudication.md`.
+- Four-model provenance:
+  `eval/annotations/czenec_batch_200_four_model_majority_labeled.csv` and
+  `eval/reports/czenec_batch_200_four_model_agreement.json`.
+- Regression evaluator: `scripts/evaluate_weak_gold.py`, documented in
+  `docs/EVALUATION.md`.
 
-The strict majority baseline uses only fields where one label receives more than
-half of the available model votes. With four model labelers, this means 4/4 or
-3/4 agreement. A 2/2 split is intentionally left blank instead of being forced.
+The semi-gold baseline defaults to the human annotation and changes labels only
+where manual rereading of the article, human note, and model outputs made a
+narrower decision clearly better. The first adjudication pass reviewed 26
+lowest-agreement or high-impact articles and changed 12 labels across 6
+articles.
+
+The original strict-majority baseline uses only fields where one label receives
+more than half of the available model votes. With four model labelers, this
+means 4/4 or 3/4 agreement. A 2/2 split is intentionally left blank instead of
+being forced.
 
 Consensus across 1,800 article-field decisions:
 
@@ -36,11 +50,18 @@ This gives strict-majority labels for 1,476 of 1,800 fields, or 82.0%.
 Coverage is strongest for `topic_relevance` and `avoidance_relevance`, and
 weakest for `concern_bucket`, `dominant_frame`, and `seg_young_urban_relevance`.
 
-Interpretation: this is a useful weak-gold baseline for prompt/model regression,
-schema tuning, and comparing extractors. It is not human ground truth and should
-not be used to claim validated real-world accuracy. It does show that the label
-schema is workable and that the most unstable parts are the subjective framing
-fields.
+Against the semi-gold baseline, strict majority scores 0.7541 accuracy and
+0.6782 macro F1 on the 1,476 fields it labels. ChatGPT is the strongest complete
+single-model baseline in this batch, with 0.7517 accuracy and 0.6608 macro F1
+across all 1,800 fields.
+
+Interpretation: this is now a usable semi-gold baseline for prompt/model
+regression, schema tuning, and comparing extractors. It is not calibrated human
+ground truth and should not be used to claim validated real-world accuracy. It
+does show that the label schema is workable and that the most unstable parts are
+the subjective framing fields. The article extractor now separates independent
+`seg_*_relevance` values from normalized `seg_*` aggregation shares, and passes
+article body text into the prompt when cleaned body text is available.
 
 ## Validated Concerns
 
@@ -67,13 +88,13 @@ coverage changed.
 
 ### 2. LLM-Only Signals Still Have No Human Ground Truth
 
-**Status:** Legitimate, partly mitigated by weak-gold model consensus.
+**Status:** Legitimate, partly mitigated by the semi-gold baseline.
 
 `extraction/llm_client.py` asks a local LLM to produce `concern_level`,
-`purchase_intent`, `avoidance_signals`, `dominant_frame`, and segment weights.
-Those values are normalized and stored. There is now a 200-article four-model
-consensus baseline, but there is still no independent human-labeled dataset
-proving that the labels match human judgment.
+`purchase_intent`, `avoidance_signals`, `dominant_frame`, and segment relevance
+scores. Those values are normalized and stored. There is now a 200-article
+human-plus-adjudication baseline, but it is still small and has only one human
+annotator.
 
 Research on LLM framing detection supports this concern: LLMs can be useful, but
 performance depends on prompt design, domain, ambiguity, and evaluation against
@@ -83,9 +104,10 @@ human annotations.
 signals.
 
 **Solutions:**
-- Treat the 200-article majority baseline as weak gold for regression tests, not
-  as final truth.
-- Use strict majority only; leave 2/2 and 2/1/1 splits unresolved.
+- Treat the 200-article semi-gold baseline as regression truth for now, not as
+  final calibrated truth.
+- Keep the four-model strict-majority baseline as provenance and a comparison
+  target, not the primary label source.
 - Expand the Czech news evaluation set:
   - 500-1,000 articles across topics and outlet types.
   - Labels for topic relevance, dominant frame, concern bucket,
@@ -310,9 +332,11 @@ in those IDs or that numeric claims match computed values.
 
 **Status:** Partly addressed.
 
-The repo now has a compact 200-article weak-gold dataset derived from four model
-labelers. This is enough to detect large prompt/model regressions and to compare
-extractor variants. It is not enough to establish calibrated model quality.
+The repo now has a compact 200-article semi-gold dataset derived from four model
+labelers, one human annotation pass, and manual adjudication of the lowest
+agreement cases. This is enough to detect large prompt/model regressions and to
+compare extractor variants. It is not enough to establish calibrated model
+quality.
 
 **Proposed schema:**
 
@@ -341,10 +365,10 @@ seg_senior_relevance,seg_b2b_relevance,annotator_id,notes
 
 ### Phase 2: Build the First Evaluation Set
 
-- Use the 200-article four-model strict-majority set as the initial regression
+- Use `eval/annotations/czech_batch_200_semi_gold.csv` as the initial regression
   baseline.
-- Add a small reusable evaluator that compares current extractor outputs against
-  the strict-majority labels.
+- Use `scripts/evaluate_weak_gold.py` to compare extractor/model outputs against
+  the semi-gold labels.
 - Expand toward 500-1,000 articles only after the schema and prompts stabilize.
 - Track per-field and per-topic agreement, not only aggregate accuracy.
 

@@ -71,7 +71,8 @@ curl -X POST "http://localhost:8000/extract?topic=energie"
 **Notes:**
 - Processes unprocessed articles only (idempotent)
 - Uses qwen2.5:7b-instruct (primary) or gemma3:1b (fallback)
-- Extracts 8-field signal schema per article
+- Extracts article-level behavioral signals, independent segment relevance, and
+  normalized segment aggregation shares
 - Optional named entity enrichment (spaCy, if available)
 - Updates feed bandit rewards based on signal density
 - Time: 1-2 minutes for ~20 articles (~30-50ms per article)
@@ -83,6 +84,12 @@ curl -X POST "http://localhost:8000/extract?topic=energie"
   "purchase_intent": 0.4,
   "avoidance_signals": 0.3,
   "dominant_frame": "opportunity",
+  "topic_relevance": "2",
+  "topic_relevance_score": 0.94,
+  "seg_young_urban_relevance": 0.8,
+  "seg_family_relevance": 0.5,
+  "seg_senior_relevance": 0.1,
+  "seg_b2b_relevance": 0.2,
   "seg_young_urban": 0.6,
   "seg_family": 0.3,
   "seg_senior": 0.05,
@@ -123,6 +130,12 @@ curl "http://localhost:8000/signals?topic=energie&limit=10&offset=0"
       "purchase_intent": 0.41,
       "avoidance_signals": 0.28,
       "dominant_frame": "opportunity",
+      "topic_relevance": "2",
+      "topic_relevance_score": 0.91,
+      "seg_young_urban_relevance": 0.82,
+      "seg_family_relevance": 0.40,
+      "seg_senior_relevance": 0.08,
+      "seg_b2b_relevance": 0.20,
       "seg_young_urban": 0.65,
       "seg_family": 0.25,
       "seg_senior": 0.05,
@@ -137,7 +150,8 @@ curl "http://localhost:8000/signals?topic=energie&limit=10&offset=0"
 **Notes:**
 - Fast query: <100ms
 - Returns 0 results if topic has no signals (run /extract first)
-- Signals are normalized (clamped [0,1], softmax-normalized segments)
+- Signals are normalized. `seg_*_relevance` fields are independent relevance
+  scores; `seg_*` fields are normalized aggregation shares used by drift math.
 
 **Errors:**
 - 400: Invalid limit/offset
@@ -177,7 +191,8 @@ curl "http://localhost:8000/calibration/energie/young_urban?days_back=7"
 ```
 
 **Notes:**
-- Aggregates signals from articles where seg_X > 0.5 (roughly relevant to segment)
+- Aggregates signals from articles where `seg_X > 0.5` (roughly relevant to
+  segment as a normalized aggregation share)
 - Weighted average per segment
 - Recomputed on each `/extract` call
 - Returns null fields if no data

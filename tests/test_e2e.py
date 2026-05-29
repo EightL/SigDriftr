@@ -144,6 +144,9 @@ def test_end_to_end_pipeline_produces_brief_and_bandit_updates() -> None:
             "ingestion.crawler._fetch_feed_bytes",
             return_value=rss_payload,
         ), patch(
+            "ingestion.crawler._fetch_article_body",
+            side_effect=lambda url, fallback_summary: (fallback_summary, url),
+        ), patch(
             "ingestion.crawler.feedparser.parse",
             return_value=parsed_feed,
         ), patch(
@@ -154,7 +157,21 @@ def test_end_to_end_pipeline_produces_brief_and_bandit_updates() -> None:
             return_value=[],
         ), patch(
             "brief.generator._call_ollama_json",
-            return_value=brief_payload,
+            side_effect=[
+                {
+                    "facts": ["Senior coverage is showing the strongest movement."],
+                    "numeric_changes": ["senior concern_level +0.12"],
+                    "cited_clusters": ["track-1"],
+                    "cited_articles": ["article-1"],
+                    "evidence_gaps": [],
+                },
+                {
+                    "what_changed": "Senior concern is rising fastest in the current window.",
+                    "for_whom": "Seniors are the clearest leading segment.",
+                    "uncertainty_and_caveats": [],
+                },
+                brief_payload,
+            ],
         ):
             inserted = crawl("inflace")
             processed = run_extraction("inflace")

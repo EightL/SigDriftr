@@ -7,7 +7,6 @@ from db.init import get_conn
 from delta.mapper import SEGMENTS, SIGNAL_KEYS
 from delta.seeder import ensure_topic_baselines
 
-
 def get_profile_history(
     topic: str,
     days_back: int,

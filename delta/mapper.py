@@ -2,6 +2,7 @@ import hashlib
 from datetime import datetime, timedelta, timezone
 
 from db.init import get_conn
+from db.topic_queries import topic_filter_sql
 
 
 SEGMENTS = ["young_urban", "family", "senior", "b2b"]
@@ -46,9 +47,16 @@ def compute_segment_profiles(
     topic: str,
     days_back: int = 7,
     learn_baseline: bool = False,
+    *,
+    country: str = "",
+    source: str = "",
+    language: str | None = None,
 ) -> list[dict]:
     conn = get_conn()
     since = _window_start(days_back)
+    normalized_country = (country or "").strip().upper()
+    normalized_source = (source or "").strip().lower()
+    normalized_language = ((language or "").strip().lower() or None)
 
     query = """
         SELECT
@@ -57,12 +65,21 @@ def compute_segment_profiles(
             s.seg_young_urban, s.seg_family, s.seg_senior, s.seg_b2b
         FROM signals s
         JOIN articles a ON s.article_id = a.id
-        WHERE s.extracted_at >= ?
+        WHERE COALESCE(a.published_at, a.fetched_at) >= ?
     """
-    params: list[str] = [since]
-    if topic:
-        query += " AND a.topic = ?"
-        params.append(topic)
+    params: list[object] = [since]
+    topic_sql, topic_params = topic_filter_sql("a", topic)
+    query += topic_sql
+    params.extend(topic_params)
+    if normalized_country:
+        query += " AND a.country = ?"
+        params.append(normalized_country)
+    if normalized_source:
+        query += " AND LOWER(a.outlet) = ?"
+        params.append(normalized_source)
+    if normalized_language is not None:
+        query += " AND LOWER(a.language) = ?"
+        params.append(normalized_language)
 
     rows = conn.execute(query, params).fetchall()
 

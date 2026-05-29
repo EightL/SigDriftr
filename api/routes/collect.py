@@ -7,5 +7,9 @@ router = APIRouter()
 
 
 @router.post("/collect")
-async def collect(topic: str) -> dict[str, int | str]:
-    return await run_collection_cycle(topic)
+async def collect(
+    topic: str,
+    country: str = "",
+    source: str = "",
+) -> dict[str, int | str]:
+    return await run_collection_cycle(topic, country=country, source=source)

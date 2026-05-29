@@ -131,10 +131,14 @@ Fallback: If embedding model unavailable, only direct match applies (silent degr
   "purchase_intent": 0.0-1.0,      # Likelihood to buy/act?
   "avoidance_signals": 0.0-1.0,    # Desire to avoid/shun?
   "dominant_frame": "fear|opportunity|conflict|neutral",
-  "seg_young_urban": 0.0-1.0,      # Relevance to young_urban
-  "seg_family": 0.0-1.0,           # Relevance to family
-  "seg_senior": 0.0-1.0,           # Relevance to senior
-  "seg_b2b": 0.0-1.0               # Relevance to b2b
+  "seg_young_urban_relevance": 0.0-1.0,  # Independent relevance to young_urban
+  "seg_family_relevance": 0.0-1.0,       # Independent relevance to family
+  "seg_senior_relevance": 0.0-1.0,       # Independent relevance to senior
+  "seg_b2b_relevance": 0.0-1.0,          # Independent relevance to b2b
+  "seg_young_urban": 0.0-1.0,            # Normalized aggregation share
+  "seg_family": 0.0-1.0,                 # Normalized aggregation share
+  "seg_senior": 0.0-1.0,                 # Normalized aggregation share
+  "seg_b2b": 0.0-1.0                    # Normalized aggregation share
 }
 ```
 
@@ -147,8 +151,9 @@ Fallback: If embedding model unavailable, only direct match applies (silent degr
 **Post-Processing (Normalization):**
 1. Clamp numeric fields to [0, 1]
 2. Restrict dominant_frame to enum values
-3. Softmax segment weights: sum(seg_*) = 1.0
-4. Blend with feed priors: final = 0.7 * llm_weight + 0.3 * feed_prior
+3. Keep independent segment relevance scores as `seg_*_relevance`
+4. Derive softmax segment shares: sum(seg_*) = 1.0
+5. Blend segment shares with feed priors: final = 0.7 * derived_share + 0.3 * feed_prior
 
 **Optional Enrichment (spaCy):**
 - Extract named entities (PERSON, ORG, LOC, etc.)
@@ -182,7 +187,7 @@ Fallback: If embedding model unavailable, only direct match applies (silent degr
 
 **Aggregation Logic:**
 For each segment (young_urban, family, senior, b2b):
-1. Select articles where seg_* > 0.5 (roughly relevant)
+1. Select articles where `seg_* > 0.5` (dominant normalized segment share)
 2. Compute weighted average of:
    - concern_level_avg = Σ(concern_level * seg_*) / Σ(seg_*)
    - purchase_intent_avg = Σ(purchase_intent * seg_*) / Σ(seg_*)
@@ -272,7 +277,7 @@ alert_level:
 - Stores: 1 row per unique article
 
 **signals** (1:1 with articles)
-- id (PK), article_id (FK), concern_level, purchase_intent, avoidance_signals, dominant_frame, seg_young_urban, seg_family, seg_senior, seg_b2b, raw_json (full LLM response), extracted_at
+- id (PK), article_id (FK), concern_level, purchase_intent, avoidance_signals, dominant_frame, seg_young_urban, seg_family, seg_senior, seg_b2b, seg_young_urban_relevance, seg_family_relevance, seg_senior_relevance, seg_b2b_relevance, raw_json (full LLM response), extracted_at
 - Stores: 1 row per article signal
 
 **article_entities** (Optional, 1:N with articles)

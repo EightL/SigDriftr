@@ -11,8 +11,363 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 _local = threading.local()
 
 
+def _ensure_cluster_schema(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS cluster_runs (
+            id                        INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id                    TEXT    NOT NULL UNIQUE,
+            topic                     TEXT    NOT NULL,
+            country                   TEXT    NOT NULL DEFAULT '',
+            source                    TEXT    NOT NULL DEFAULT '',
+            language                  TEXT,
+            window_start              TEXT    NOT NULL,
+            window_end                TEXT    NOT NULL,
+            status                    TEXT    NOT NULL,
+            n_articles                INTEGER NOT NULL,
+            n_clusters                INTEGER NOT NULL,
+            n_noise                   INTEGER NOT NULL,
+            umap_n_components         INTEGER NOT NULL DEFAULT 10,
+            umap_n_neighbors          INTEGER NOT NULL DEFAULT 15,
+            hdbscan_min_cluster_size  INTEGER NOT NULL DEFAULT 3,
+            hdbscan_min_samples       INTEGER NOT NULL DEFAULT 2,
+            model_name                TEXT    NOT NULL,
+            model_version             TEXT,
+            created_at                TEXT    NOT NULL DEFAULT (datetime('now'))
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_cluster_runs_scope_created
+        ON cluster_runs(topic, country, source, language, created_at DESC)
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS clusters (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id          TEXT    NOT NULL REFERENCES cluster_runs(run_id),
+            cluster_label   INTEGER NOT NULL,
+            size            INTEGER NOT NULL,
+            centroid_vector TEXT    NOT NULL,
+            centroid_dim    INTEGER NOT NULL DEFAULT 384,
+            created_at      TEXT    NOT NULL DEFAULT (datetime('now'))
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_clusters_run_id
+        ON clusters(run_id)
+        """
+    )
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_clusters_run_label
+        ON clusters(run_id, cluster_label)
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS cluster_memberships (
+            id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id              TEXT    NOT NULL REFERENCES cluster_runs(run_id),
+            cluster_id          INTEGER REFERENCES clusters(id),
+            article_id          TEXT    NOT NULL REFERENCES articles(id),
+            embedding_id        INTEGER NOT NULL REFERENCES article_embeddings(id),
+            membership_strength REAL,
+            is_noise            INTEGER NOT NULL DEFAULT 0,
+            created_at          TEXT    NOT NULL DEFAULT (datetime('now'))
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_cm_run_id
+        ON cluster_memberships(run_id)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_cm_article
+        ON cluster_memberships(article_id)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_cm_cluster
+        ON cluster_memberships(cluster_id)
+        """
+    )
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_cm_run_article_unique
+        ON cluster_memberships(run_id, article_id)
+        """
+    )
+
+
+def _ensure_cluster_signal_schema(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS cluster_signals (
+            cluster_id              INTEGER PRIMARY KEY REFERENCES clusters(id),
+            run_id                  TEXT    NOT NULL REFERENCES cluster_runs(run_id),
+            topic_label             TEXT    NOT NULL,
+            concern_level           REAL    NOT NULL,
+            purchase_intent         REAL    NOT NULL,
+            avoidance_signals       REAL    NOT NULL,
+            sentiment               REAL    NOT NULL,
+            dominant_frame          TEXT    NOT NULL,
+            frame_detail            TEXT    NOT NULL,
+            seg_young_urban         REAL    NOT NULL,
+            seg_family              REAL    NOT NULL,
+            seg_senior              REAL    NOT NULL,
+            seg_b2b                 REAL    NOT NULL,
+            evidence_json           TEXT    NOT NULL DEFAULT '[]',
+            raw_json                TEXT    NOT NULL DEFAULT '{}',
+            member_count            INTEGER NOT NULL,
+            membership_fingerprint  TEXT    NOT NULL,
+            exemplar_article_ids    TEXT    NOT NULL,
+            extractor_provider      TEXT    NOT NULL,
+            extractor_model         TEXT    NOT NULL,
+            schema_version          TEXT    NOT NULL DEFAULT 'v1',
+            extracted_at            TEXT    NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_cluster_signals_run_id
+        ON cluster_signals(run_id)
+        """
+    )
+
+
+def _ensure_cluster_drift_schema(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS cluster_tracks (
+            track_id                   TEXT PRIMARY KEY,
+            topic                      TEXT    NOT NULL,
+            country                    TEXT    NOT NULL DEFAULT '',
+            source                     TEXT    NOT NULL DEFAULT '',
+            language                   TEXT,
+            status                     TEXT    NOT NULL DEFAULT 'active',
+            baseline_topic_label       TEXT    NOT NULL DEFAULT '',
+            baseline_centroid_vector   TEXT    NOT NULL,
+            baseline_centroid_dim      INTEGER NOT NULL DEFAULT 384,
+            concern_level              REAL    NOT NULL,
+            purchase_intent            REAL    NOT NULL,
+            avoidance_signals          REAL    NOT NULL,
+            dominant_frame             TEXT    NOT NULL,
+            seg_young_urban            REAL    NOT NULL,
+            seg_family                 REAL    NOT NULL,
+            seg_senior                 REAL    NOT NULL,
+            seg_b2b                    REAL    NOT NULL,
+            sample_count               INTEGER NOT NULL DEFAULT 0,
+            is_learned                 INTEGER NOT NULL DEFAULT 0,
+            missed_runs                INTEGER NOT NULL DEFAULT 0,
+            last_member_count          INTEGER NOT NULL DEFAULT 0,
+            last_mean_membership_strength REAL NOT NULL DEFAULT 0.0,
+            first_seen_run_id          TEXT    NOT NULL,
+            last_seen_run_id           TEXT    NOT NULL,
+            first_seen_at              TEXT    NOT NULL,
+            last_seen_at               TEXT    NOT NULL,
+            updated_at                 TEXT    NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_cluster_tracks_scope_status
+        ON cluster_tracks(topic, country, source, language, status, last_seen_at DESC)
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS cluster_drift_runs (
+            run_id                     TEXT PRIMARY KEY REFERENCES cluster_runs(run_id),
+            topic                      TEXT    NOT NULL,
+            country                    TEXT    NOT NULL DEFAULT '',
+            source                     TEXT    NOT NULL DEFAULT '',
+            language                   TEXT,
+            observed_cluster_count     INTEGER NOT NULL,
+            matched_track_count        INTEGER NOT NULL,
+            new_track_count            INTEGER NOT NULL,
+            missing_track_count        INTEGER NOT NULL,
+            segment_count              INTEGER NOT NULL,
+            computed_at                TEXT    NOT NULL,
+            duration_s                 REAL    NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_cluster_drift_runs_scope_computed
+        ON cluster_drift_runs(topic, country, source, language, computed_at DESC)
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS cluster_drift_observations (
+            id                         INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id                     TEXT    NOT NULL REFERENCES cluster_drift_runs(run_id),
+            track_id                   TEXT    NOT NULL REFERENCES cluster_tracks(track_id),
+            cluster_id                 INTEGER REFERENCES clusters(id),
+            cluster_label              INTEGER,
+            topic_label                TEXT    NOT NULL DEFAULT '',
+            baseline_topic_label       TEXT    NOT NULL DEFAULT '',
+            match_type                 TEXT    NOT NULL,
+            direction                  TEXT    NOT NULL,
+            centroid_distance          REAL    NOT NULL DEFAULT 0.0,
+            segment_vector_distance    REAL    NOT NULL DEFAULT 0.0,
+            signal_drift               REAL    NOT NULL DEFAULT 0.0,
+            drift_magnitude            REAL    NOT NULL DEFAULT 0.0,
+            alert_level                TEXT    NOT NULL,
+            confidence                 REAL    NOT NULL DEFAULT 0.0,
+            member_count               INTEGER NOT NULL DEFAULT 0,
+            mean_membership_strength   REAL    NOT NULL DEFAULT 0.0,
+            concern_level              REAL    NOT NULL DEFAULT 0.0,
+            purchase_intent            REAL    NOT NULL DEFAULT 0.0,
+            avoidance_signals          REAL    NOT NULL DEFAULT 0.0,
+            dominant_frame             TEXT    NOT NULL DEFAULT 'neutral',
+            baseline_concern_level     REAL,
+            baseline_purchase_intent   REAL,
+            baseline_avoidance_signals REAL,
+            baseline_dominant_frame    TEXT,
+            delta_concern_level        REAL    NOT NULL DEFAULT 0.0,
+            delta_purchase_intent      REAL    NOT NULL DEFAULT 0.0,
+            delta_avoidance_signals    REAL    NOT NULL DEFAULT 0.0,
+            seg_young_urban            REAL    NOT NULL DEFAULT 0.0,
+            seg_family                 REAL    NOT NULL DEFAULT 0.0,
+            seg_senior                 REAL    NOT NULL DEFAULT 0.0,
+            seg_b2b                    REAL    NOT NULL DEFAULT 0.0,
+            baseline_seg_young_urban   REAL    NOT NULL DEFAULT 0.0,
+            baseline_seg_family        REAL    NOT NULL DEFAULT 0.0,
+            baseline_seg_senior        REAL    NOT NULL DEFAULT 0.0,
+            baseline_seg_b2b           REAL    NOT NULL DEFAULT 0.0,
+            frame_shift                INTEGER NOT NULL DEFAULT 0,
+            computed_at                TEXT    NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_cluster_drift_observations_run_id
+        ON cluster_drift_observations(run_id)
+        """
+    )
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_cluster_drift_observations_run_track
+        ON cluster_drift_observations(run_id, track_id)
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS cluster_segment_drifts (
+            id                         INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id                     TEXT    NOT NULL REFERENCES cluster_drift_runs(run_id),
+            segment                    TEXT    NOT NULL,
+            article_count              INTEGER NOT NULL DEFAULT 0,
+            has_data                   INTEGER NOT NULL DEFAULT 0,
+            concern_level              REAL    NOT NULL DEFAULT 0.0,
+            purchase_intent            REAL    NOT NULL DEFAULT 0.0,
+            avoidance_signals          REAL    NOT NULL DEFAULT 0.0,
+            dominant_frame             TEXT    NOT NULL DEFAULT 'neutral',
+            baseline_concern_level     REAL,
+            baseline_purchase_intent   REAL,
+            baseline_avoidance_signals REAL,
+            baseline_dominant_frame    TEXT,
+            delta_concern_level        REAL    NOT NULL DEFAULT 0.0,
+            delta_purchase_intent      REAL    NOT NULL DEFAULT 0.0,
+            delta_avoidance_signals    REAL    NOT NULL DEFAULT 0.0,
+            drift_magnitude            REAL    NOT NULL DEFAULT 0.0,
+            frame_shift                INTEGER NOT NULL DEFAULT 0,
+            alert_level                TEXT    NOT NULL,
+            confidence                 REAL    NOT NULL DEFAULT 0.0,
+            baseline_is_learned        INTEGER NOT NULL DEFAULT 0,
+            baseline_sample_count      INTEGER NOT NULL DEFAULT 0,
+            baseline_age_days          INTEGER,
+            status                     TEXT    NOT NULL,
+            direction                  TEXT    NOT NULL DEFAULT 'stable',
+            centroid_shift             REAL    NOT NULL DEFAULT 0.0,
+            new_cluster_weight         REAL    NOT NULL DEFAULT 0.0,
+            tracked_cluster_count      INTEGER NOT NULL DEFAULT 0,
+            matched_cluster_count      INTEGER NOT NULL DEFAULT 0,
+            new_cluster_count          INTEGER NOT NULL DEFAULT 0,
+            missing_cluster_count      INTEGER NOT NULL DEFAULT 0,
+            computed_at                TEXT    NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_cluster_segment_drifts_run_segment
+        ON cluster_segment_drifts(run_id, segment)
+        """
+    )
+
+
 def run_migrations(conn: sqlite3.Connection) -> None:
     """Apply idempotent schema migrations for existing databases."""
+    table_names = {
+        row[0]
+        for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table'"
+        ).fetchall()
+    }
+
+    if "articles" in table_names:
+        article_columns = {
+            row[1]
+            for row in conn.execute("PRAGMA table_info(articles)").fetchall()
+        }
+        if "body" not in article_columns:
+            conn.execute(
+                """
+                ALTER TABLE articles
+                ADD COLUMN body TEXT
+                """
+            )
+        if "country" not in article_columns:
+            conn.execute(
+                """
+                ALTER TABLE articles
+                ADD COLUMN country TEXT NOT NULL DEFAULT 'CZ'
+                """
+            )
+        if "language" not in article_columns:
+            conn.execute(
+                """
+                ALTER TABLE articles
+                ADD COLUMN language TEXT NOT NULL DEFAULT 'cs'
+                """
+            )
+        if "canonical_url" not in article_columns:
+            conn.execute(
+                """
+                ALTER TABLE articles
+                ADD COLUMN canonical_url TEXT
+                """
+            )
+
+    if "signals" in table_names:
+        signal_columns = {
+            row[1]
+            for row in conn.execute("PRAGMA table_info(signals)").fetchall()
+        }
+        for column in [
+            "seg_young_urban_relevance",
+            "seg_family_relevance",
+            "seg_senior_relevance",
+            "seg_b2b_relevance",
+        ]:
+            if column not in signal_columns:
+                conn.execute(f"ALTER TABLE signals ADD COLUMN {column} REAL")
+
     columns = {
         row[1]
         for row in conn.execute("PRAGMA table_info(baselines)").fetchall()
@@ -32,6 +387,102 @@ def run_migrations(conn: sqlite3.Connection) -> None:
             ADD COLUMN is_learned INTEGER NOT NULL DEFAULT 0
             """
         )
+
+    if "articles" in table_names:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS article_topics (
+                article_id       TEXT NOT NULL,
+                topic            TEXT NOT NULL,
+                relevance_score  REAL NOT NULL DEFAULT 1.0,
+                matched_at       TEXT NOT NULL,
+                PRIMARY KEY (article_id, topic),
+                FOREIGN KEY (article_id) REFERENCES articles(id)
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_article_topics_topic_matched_at
+            ON article_topics(topic, matched_at DESC)
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_articles_country_outlet
+            ON articles(country, outlet)
+            """
+        )
+        conn.execute(
+            """
+            CREATE TRIGGER IF NOT EXISTS trg_articles_insert_topic_link
+            AFTER INSERT ON articles
+            WHEN NEW.topic IS NOT NULL AND TRIM(NEW.topic) != ''
+            BEGIN
+                INSERT OR IGNORE INTO article_topics(article_id, topic, relevance_score, matched_at)
+                VALUES (NEW.id, NEW.topic, 1.0, COALESCE(NEW.fetched_at, CURRENT_TIMESTAMP));
+            END
+            """
+        )
+        conn.execute(
+            """
+            CREATE TRIGGER IF NOT EXISTS trg_articles_update_topic_link
+            AFTER UPDATE OF topic ON articles
+            WHEN NEW.topic IS NOT NULL AND TRIM(NEW.topic) != ''
+            BEGIN
+                INSERT OR IGNORE INTO article_topics(article_id, topic, relevance_score, matched_at)
+                VALUES (NEW.id, NEW.topic, 1.0, COALESCE(NEW.fetched_at, CURRENT_TIMESTAMP));
+            END
+            """
+        )
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO article_topics(article_id, topic, relevance_score, matched_at)
+            SELECT id, topic, 1.0, COALESCE(fetched_at, CURRENT_TIMESTAMP)
+            FROM articles
+            WHERE topic IS NOT NULL AND TRIM(topic) != ''
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS article_embeddings (
+                id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                article_id          TEXT    NOT NULL REFERENCES articles(id),
+                model_name          TEXT    NOT NULL DEFAULT 'sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2',
+                model_version       TEXT,
+                embedding_dim       INTEGER NOT NULL DEFAULT 384,
+                embedding_vector    TEXT    NOT NULL,
+                embedding_text      TEXT    NOT NULL,
+                embedding_text_hash TEXT    NOT NULL,
+                language            TEXT,
+                status              TEXT    NOT NULL DEFAULT 'pending',
+                error_message       TEXT,
+                embedded_at         TEXT,
+                created_at          TEXT    NOT NULL DEFAULT (datetime('now')),
+                updated_at          TEXT    NOT NULL DEFAULT (datetime('now')),
+                UNIQUE (article_id, model_name, embedding_text_hash)
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_ae_article_model_updated
+            ON article_embeddings(article_id, model_name, updated_at)
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_ae_model_status_updated
+            ON article_embeddings(model_name, status, updated_at)
+            """
+        )
+        _ensure_cluster_schema(conn)
+        _ensure_cluster_signal_schema(conn)
+        _ensure_cluster_drift_schema(conn)
+    elif "cluster_signals" not in table_names:
+        _ensure_cluster_signal_schema(conn)
+    elif "cluster_drift_runs" not in table_names:
+        _ensure_cluster_drift_schema(conn)
 
 
 def get_conn() -> sqlite3.Connection:
@@ -53,8 +504,12 @@ def get_conn() -> sqlite3.Connection:
                 outlet       TEXT NOT NULL,
                 title        TEXT NOT NULL,
                 summary      TEXT,
+                body         TEXT,
                 url          TEXT UNIQUE NOT NULL,
+                canonical_url TEXT,
                 topic        TEXT,
+                country      TEXT NOT NULL DEFAULT 'CZ',
+                language     TEXT NOT NULL DEFAULT 'cs',
                 published_at TEXT,
                 fetched_at   TEXT NOT NULL
             );
@@ -72,6 +527,10 @@ def get_conn() -> sqlite3.Connection:
                 seg_family         REAL,
                 seg_senior         REAL,
                 seg_b2b            REAL,
+                seg_young_urban_relevance REAL,
+                seg_family_relevance      REAL,
+                seg_senior_relevance      REAL,
+                seg_b2b_relevance         REAL,
                 raw_json           TEXT,
                 extracted_at       TEXT NOT NULL,
                 FOREIGN KEY (article_id) REFERENCES articles(id)
@@ -155,6 +614,42 @@ def get_conn() -> sqlite3.Connection:
             );
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS article_embeddings (
+                id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                article_id          TEXT    NOT NULL REFERENCES articles(id),
+                model_name          TEXT    NOT NULL DEFAULT 'sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2',
+                model_version       TEXT,
+                embedding_dim       INTEGER NOT NULL DEFAULT 384,
+                embedding_vector    TEXT    NOT NULL,
+                embedding_text      TEXT    NOT NULL,
+                embedding_text_hash TEXT    NOT NULL,
+                language            TEXT,
+                status              TEXT    NOT NULL DEFAULT 'pending',
+                error_message       TEXT,
+                embedded_at         TEXT,
+                created_at          TEXT    NOT NULL DEFAULT (datetime('now')),
+                updated_at          TEXT    NOT NULL DEFAULT (datetime('now')),
+                UNIQUE (article_id, model_name, embedding_text_hash)
+            );
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_ae_article_model_updated
+            ON article_embeddings(article_id, model_name, updated_at)
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_ae_model_status_updated
+            ON article_embeddings(model_name, status, updated_at)
+            """
+        )
+        _ensure_cluster_schema(conn)
+        _ensure_cluster_signal_schema(conn)
+        _ensure_cluster_drift_schema(conn)
         run_migrations(conn)
         conn.commit()
         _local.conn = conn

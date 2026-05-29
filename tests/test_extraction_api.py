@@ -2,6 +2,7 @@
 import asyncio
 import json
 import tempfile
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, patch
 
 import db.init
@@ -11,6 +12,9 @@ pytest.importorskip("tenacity")
 pytest.importorskip("pydantic")
 
 from brief.generator import clear_brief_cache
+
+
+RECENT_TS = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
 def setup_temp_db() -> tempfile.TemporaryDirectory:
@@ -32,15 +36,28 @@ def cleanup_temp_db(temp_dir: tempfile.TemporaryDirectory) -> None:
     temp_dir.cleanup()
 
 
-def insert_article(article_id: str, topic: str, outlet: str = "irozhlas") -> None:
+def insert_article(
+    article_id: str,
+    topic: str,
+    outlet: str = "irozhlas",
+    body: str | None = None,
+) -> None:
     conn = db.init.get_conn()
     conn.execute(
         """
         INSERT INTO articles
-        (id, outlet, title, summary, url, topic, published_at, fetched_at)
-        VALUES (?, ?, 'Title', 'Summary', ?, ?, '2026-03-17T00:00:00+00:00', '2026-03-17T00:00:00+00:00')
+        (id, outlet, title, summary, body, url, topic, published_at, fetched_at)
+        VALUES (?, ?, 'Title', 'Summary', ?, ?, ?, ?, ?)
         """,
-        (article_id, outlet, f"https://example.test/{article_id}", topic),
+        (
+            article_id,
+            outlet,
+            body,
+            f"https://example.test/{article_id}",
+            topic,
+            RECENT_TS,
+            RECENT_TS,
+        ),
     )
     conn.commit()
 
@@ -65,7 +82,7 @@ def insert_signal(article_id: str) -> None:
         (article_id, concern_level, purchase_intent, avoidance_signals,
          dominant_frame, seg_young_urban, seg_family, seg_senior, seg_b2b,
          raw_json, extracted_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '2026-03-17T00:00:00+00:00')
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             article_id,
@@ -78,6 +95,7 @@ def insert_signal(article_id: str) -> None:
             raw_json["seg_senior"],
             raw_json["seg_b2b"],
             json.dumps(raw_json),
+            RECENT_TS,
         ),
     )
     conn.commit()
@@ -95,7 +113,7 @@ def test_get_signals_does_not_trigger_extraction() -> None:
         insert_signal("article-1")
 
         with patch("api.routes.signals.run_extraction") as mock_extract:
-            rows = signals_route.get_signals("inflace", BackgroundTasks())
+            rows = signals_route.get_signals("inflace", background_tasks=BackgroundTasks())
 
         assert len(rows) == 1
         assert rows[0]["article_id"] == "article-1"
@@ -171,7 +189,7 @@ def test_collect_route_runs_collection_cycle() -> None:
             "rewards_recorded": 3,
             "topic": "inflace",
         }
-        mock_collect.assert_awaited_once_with("inflace")
+        mock_collect.assert_awaited_once_with("inflace", country="", source="")
 
     asyncio.run(run_test())
 
@@ -179,79 +197,68 @@ def test_collect_route_runs_collection_cycle() -> None:
 def test_pipeline_route_returns_brief_summary() -> None:
     pytest.importorskip("fastapi")
     from api.routes import pipeline as pipeline_route
-    from brief.models import BriefConfidenceContext, ResearchBrief
 
     async def run_test() -> None:
-        with patch(
-            "api.routes.pipeline.run_collection_cycle",
-            new_callable=AsyncMock,
-            return_value={
-                "inserted": 2,
-                "extracted": 2,
-                "rewards_recorded": 2,
+        summary = {
+            "scope": {
                 "topic": "inflace",
+                "country": "",
+                "source": "",
+                "language": None,
             },
-        ) as mock_collect, patch(
-            "api.routes.pipeline.generate_brief_cached",
-            return_value=ResearchBrief(
-                topic="inflace",
-                status="warming",
-                headline="Inflation concern rises among families",
-                narrative="Structured summary.",
-                most_affected_segment="family",
-                drift_type="concern_spike",
-                alert_level="mild",
-                confidence_context=BriefConfidenceContext(
-                    segment_confidence={
-                        "young_urban": 0.4,
-                        "family": 0.7,
-                        "senior": 0.5,
-                        "b2b": 0.3,
-                    }
-                ),
-                hypotheses=[
-                    {
-                        "segment": "family",
-                        "hypothesis": "Families will cut discretionary spending.",
-                        "signal_basis": "concern_level +0.12",
-                        "suggested_question": "How much has inflation coverage changed household spending?",
-                    },
-                    {
-                        "segment": "senior",
-                        "hypothesis": "Seniors remain cautious.",
-                        "signal_basis": "avoidance_signals +0.04",
-                        "suggested_question": "How likely are you to postpone purchases?",
-                    },
-                    {
-                        "segment": "young_urban",
-                        "hypothesis": "Young urban adults will delay non-essentials.",
-                        "signal_basis": "purchase_intent -0.03",
-                        "suggested_question": "How likely are you to delay a planned purchase?",
-                    },
-                ],
-                generated_at="2026-03-18T00:00:00+00:00",
-                model_used="qwen2.5:7b-instruct",
-            ),
-        ) as mock_brief:
-            result = await pipeline_route.run_pipeline("inflace")
-
-        assert result == {
-            "inserted": 2,
-            "extracted": 2,
-            "rewards_recorded": 2,
-            "topic": "inflace",
-            "brief_topic": "inflace",
+            "run_id": None,
+            "generated_at": RECENT_TS,
+            "duration_s": 0.01,
+            "cluster_status": "not_run",
             "brief_status": "warming",
-            "brief_alert_level": "mild",
-            "brief_confidence": {
-                "young_urban": 0.4,
-                "family": 0.7,
-                "senior": 0.5,
-                "b2b": 0.3,
+            "pipeline": {
+                "article_count": 2,
+                "signal_count": 2,
+                "embedding_count": 0,
+                "cluster_count": 0,
+                "noise_count": 0,
+                "cluster_status": "not_run",
+                "brief_status": "warming",
+                "strongest_segment": "family",
+                "stages": {
+                    "collect": {"status": "completed", "count": 2, "metadata": {}},
+                    "extract": {"status": "completed", "count": 2, "metadata": {}},
+                    "embed": {"status": "skipped", "count": 0, "metadata": {}},
+                    "cluster": {"status": "skipped", "count": 0, "metadata": {}},
+                    "cluster_signals": {"status": "skipped", "count": 0, "metadata": {}},
+                    "cluster_drift": {"status": "skipped", "count": 0, "metadata": {}},
+                    "brief": {"status": "warming", "count": 3, "metadata": {}},
+                },
+            },
+            "brief": {
+                "topic": "inflace",
+                "status": "warming",
+                "headline": "Inflation brief",
+                "alert_level": "mild",
+                "most_affected_segment": "family",
+                "generation_mode": "hierarchical_legacy",
             },
         }
-        mock_collect.assert_awaited_once_with("inflace")
-        mock_brief.assert_called_once_with("inflace")
+        with patch(
+            "api.routes.pipeline.run_full_pipeline",
+            new_callable=AsyncMock,
+            return_value=summary,
+        ) as mock_pipeline:
+            result = await pipeline_route.run_pipeline(
+                "inflace",
+                window_hours=24,
+                min_cluster_size=3,
+            )
+
+        assert result == summary
+        mock_pipeline.assert_awaited_once_with(
+            "inflace",
+            country="",
+            source="",
+            language=None,
+            window_hours=24,
+            min_cluster_size=3,
+        )
 
     asyncio.run(run_test())
 
@@ -296,16 +303,51 @@ def test_pipeline_api_returns_aligned_brief_trust_fields_for_cold_start_topic() 
     from main import app
 
     temp_dir = setup_temp_db()
+    summary = {
+        "scope": {
+            "topic": "cold-topic",
+            "country": "",
+            "source": "",
+            "language": None,
+        },
+        "run_id": None,
+        "generated_at": RECENT_TS,
+        "duration_s": 0.01,
+        "cluster_status": "not_run",
+        "brief_status": "insufficient_data",
+        "pipeline": {
+            "article_count": 0,
+            "signal_count": 0,
+            "embedding_count": 0,
+            "cluster_count": 0,
+            "noise_count": 0,
+            "cluster_status": "not_run",
+            "brief_status": "insufficient_data",
+            "strongest_segment": None,
+            "stages": {
+                "collect": {"status": "completed", "count": 0, "metadata": {}},
+                "extract": {"status": "completed", "count": 0, "metadata": {}},
+                "embed": {"status": "completed", "count": 0, "metadata": {}},
+                "cluster": {"status": "skipped", "count": 0, "metadata": {}},
+                "cluster_signals": {"status": "skipped", "count": 0, "metadata": {}},
+                "cluster_drift": {"status": "skipped", "count": 0, "metadata": {}},
+                "brief": {"status": "insufficient_data", "count": 3, "metadata": {}},
+            },
+        },
+        "brief": {
+            "topic": "cold-topic",
+            "status": "insufficient_data",
+            "headline": "Insufficient data",
+            "alert_level": "none",
+            "most_affected_segment": None,
+            "generation_mode": "fallback",
+        },
+    }
     try:
         with patch(
-            "api.routes.pipeline.run_collection_cycle",
+            "api.routes.pipeline.run_full_pipeline",
             new_callable=AsyncMock,
-            return_value={
-                "inserted": 0,
-                "extracted": 0,
-                "rewards_recorded": 0,
-                "topic": "cold-topic",
-            },
+            return_value=summary,
         ), patch(
             "brief.generator._call_ollama_json",
             side_effect=AssertionError("LLM should not run for insufficient_data."),
@@ -317,16 +359,10 @@ def test_pipeline_api_returns_aligned_brief_trust_fields_for_cold_start_topic() 
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["brief_topic"] == "cold-topic"
+    assert payload["scope"]["topic"] == "cold-topic"
     assert payload["brief_status"] == "insufficient_data"
-    assert payload["brief_alert_level"] == "none"
-    assert "brief_confidence" in payload
-    assert set(payload["brief_confidence"].keys()) == {
-        "young_urban",
-        "family",
-        "senior",
-        "b2b",
-    }
+    assert payload["brief"]["alert_level"] == "none"
+    assert payload["pipeline"]["brief_status"] == "insufficient_data"
 
 
 def test_run_extraction_passes_topic_to_signal_extractor() -> None:
@@ -420,6 +456,67 @@ def test_run_extraction_uses_article_topic_when_processing_all_topics() -> None:
     mock_reward.assert_called_once()
 
 
+def test_run_extraction_passes_body_and_stores_relevance_fields() -> None:
+    from extraction import extractor
+
+    temp_dir = setup_temp_db()
+    try:
+        insert_article(
+            "article-body-pass",
+            "inflace",
+            body="Full extracted article text with detail.",
+        )
+        with patch(
+            "extraction.extractor.extract_signals",
+            return_value={
+                "concern_level": 0.6,
+                "purchase_intent": 0.0,
+                "avoidance_signals": 0.2,
+                "dominant_frame": "fear",
+                "seg_young_urban": 0.25,
+                "seg_family": 0.25,
+                "seg_senior": 0.25,
+                "seg_b2b": 0.25,
+                "seg_young_urban_relevance": 0.8,
+                "seg_family_relevance": 0.3,
+                "seg_senior_relevance": 0.1,
+                "seg_b2b_relevance": 0.2,
+                "domain": "commerce",
+                "irrelevant_fields": [],
+            },
+        ) as mock_extract, patch(
+            "extraction.extractor.extract_entities",
+            return_value=[],
+        ):
+            processed = extractor.run_extraction("inflace")
+
+        conn = db.init.get_conn()
+        row = conn.execute(
+            """
+            SELECT seg_young_urban_relevance, seg_family_relevance,
+                   seg_senior_relevance, seg_b2b_relevance, raw_json
+            FROM signals
+            WHERE article_id = ?
+            """,
+            ("article-body-pass",),
+        ).fetchone()
+        raw_json = json.loads(row[4])
+    finally:
+        cleanup_temp_db(temp_dir)
+
+    assert processed == 1
+    mock_extract.assert_called_once_with(
+        "Title",
+        "Summary",
+        affinity_tag="mainstream",
+        topic="inflace",
+        body="Full extracted article text with detail.",
+    )
+    assert row[:4] == (0.8, 0.3, 0.1, 0.2)
+    assert raw_json["topic_relevance_score"] == 1.0
+    assert raw_json["topic_relevance"] == "2"
+
+
 def test_ollama_request_parses_json_mode_response_directly() -> None:
     from extraction.llm_client import _ollama_request
 
@@ -442,6 +539,92 @@ def test_ollama_request_parses_json_mode_response_directly() -> None:
         result = _ollama_request(b"{}")
 
     assert result["concern_level"] == 0.8
+    assert result["dominant_frame"] == "fear"
+
+
+def test_google_gemma_request_parses_generate_content_response() -> None:
+    from extraction.llm_client import _google_gemma_request
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self) -> bytes:
+            return json.dumps(
+                {
+                    "candidates": [
+                        {
+                            "content": {
+                                "parts": [
+                                    {
+                                        "text": "internal reasoning should be ignored",
+                                        "thought": True,
+                                    },
+                                    {
+                                        "text": json.dumps(
+                                            {
+                                                "concern_level": 0.7,
+                                                "purchase_intent": 0.3,
+                                                "avoidance_signals": 0.2,
+                                                "dominant_frame": "conflict",
+                                                "seg_young_urban": 0.4,
+                                                "seg_family": 0.3,
+                                                "seg_senior": 0.2,
+                                                "seg_b2b": 0.1,
+                                            }
+                                        )
+                                    }
+                                ]
+                            }
+                        }
+                    ]
+                }
+            ).encode("utf-8")
+
+    with (
+        patch("extraction.llm_client.GOOGLE_GEMMA_API_KEY", "test-key"),
+        patch("extraction.llm_client.GOOGLE_GEMMA_MODEL", "gemma-4-31b-it"),
+        patch("urllib.request.urlopen", return_value=FakeResponse()) as mock_urlopen,
+    ):
+        result = _google_gemma_request("Analyze this article.")
+
+    request = mock_urlopen.call_args.args[0]
+    assert "gemma-4-31b-it:generateContent" in request.full_url
+    assert "key=test-key" in request.full_url
+    assert result["concern_level"] == 0.7
+    assert result["dominant_frame"] == "conflict"
+
+
+def test_extract_signals_prefers_google_gemma_when_configured() -> None:
+    from extraction.llm_client import extract_signals
+
+    with (
+        patch("extraction.llm_client.LLM_PROVIDER", "google"),
+        patch("extraction.llm_client.GOOGLE_GEMMA_MODEL", "gemma-4-31b-it"),
+        patch(
+            "extraction.llm_client._try_google_gemma",
+            return_value={
+                "concern_level": 0.8,
+                "purchase_intent": 0.2,
+                "avoidance_signals": 0.1,
+                "dominant_frame": "fear",
+                "seg_young_urban": 0.4,
+                "seg_family": 0.3,
+                "seg_senior": 0.2,
+                "seg_b2b": 0.1,
+            },
+        ) as mock_google,
+        patch("extraction.llm_client._try_ollama") as mock_ollama,
+    ):
+        result = extract_signals("Title", "Summary", topic="politika")
+
+    mock_google.assert_called_once()
+    mock_ollama.assert_not_called()
+    assert result["extractor_provider"] == "google"
+    assert result["extractor_model"] == "gemma-4-31b-it"
     assert result["dominant_frame"] == "fear"
 
 

@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException
 
 from api.models import CalibrationResponse, ClusterDriftResponse, DriftResponse
+from db.topic_resolver import resolve_topic
 from delta.cluster_drift import get_latest_cluster_drift
 from delta.engine import compute_drift
 from delta.mapper import SEGMENTS, compute_segment_profiles
@@ -59,6 +60,7 @@ def get_drift(
     language: str | None = None,
 ) -> dict:
     real_topic = "" if topic == "_all" else topic
+    resolution = resolve_topic(real_topic) if real_topic else None
     drift = compute_drift(
         real_topic,
         days_back=days_back,
@@ -69,6 +71,9 @@ def get_drift(
     source_mix = drift[0].get("source_mix") if drift else None
     return {
         "topic": topic,
+        "requested_topic": topic,
+        "canonical_topic_id": resolution.canonical_topic_id if resolution else None,
+        "canonical_display_name": resolution.display_name if resolution else None,
         "days_back": days_back,
         "source_mix": source_mix,
         "segments": drift,

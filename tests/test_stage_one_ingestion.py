@@ -223,6 +223,62 @@ def test_same_article_can_map_to_multiple_topics_without_duplicate_article_rows(
     assert run_stats == [(1, 1, 0), (0, 1, 1)]
 
 
+def test_alias_topics_share_canonical_article_links_without_duplicate_rows() -> None:
+    from ingestion.crawler import crawl
+
+    temp_dir = setup_temp_db()
+    try:
+        feed = {
+            "outlet": "spiegel",
+            "rss_url": "https://example.test/rss",
+            "affinity_tag": "mainstream",
+            "country": "DE",
+            "language": "de",
+            "enabled": True,
+        }
+        with patch("ingestion.crawler.select_feeds", return_value=[feed]), patch(
+            "ingestion.crawler._fetch_feed_bytes",
+            return_value=b"<rss />",
+        ), patch(
+            "ingestion.crawler.feedparser.parse",
+            return_value=_single_entry_feed("Energie zdrazuje domacnostem"),
+        ), patch(
+            "ingestion.crawler._fetch_article_body",
+            return_value=("Full article body about energy prices.", "https://example.test/articles/energy-story"),
+        ):
+            crawl("energie")
+            crawl("energy")
+
+        conn = db.init.get_conn()
+        article_count = conn.execute("SELECT COUNT(*) FROM articles").fetchone()[0]
+        topic_links = conn.execute(
+            """
+            SELECT topic, raw_topic, canonical_topic_id
+            FROM article_topics
+            ORDER BY topic
+            """
+        ).fetchall()
+        run_scopes = conn.execute(
+            """
+            SELECT topic, canonical_topic_id, inserted, accepted, duplicates
+            FROM collection_runs
+            ORDER BY completed_at
+            """
+        ).fetchall()
+    finally:
+        cleanup_temp_db(temp_dir)
+
+    assert article_count == 1
+    assert topic_links == [
+        ("energie", "energie", "energy"),
+        ("energy", "energy", "energy"),
+    ]
+    assert run_scopes == [
+        ("energie", "energy", 1, 1, 0),
+        ("energy", "energy", 0, 1, 1),
+    ]
+
+
 def test_crawl_stores_fallback_summary_as_body_when_full_text_is_unavailable() -> None:
     from ingestion.crawler import crawl
 
@@ -319,6 +375,9 @@ def test_digest_route_honors_filters_and_returns_citation_articles() -> None:
         cleanup_temp_db(temp_dir)
 
     assert result.topic == "inflace"
+    assert result.requested_topic == "inflace"
+    assert result.canonical_topic_id == "inflation"
+    assert result.canonical_display_name == "Inflation"
     assert result.country == "DE"
     assert result.source == "spiegel"
     assert result.article_count == 1

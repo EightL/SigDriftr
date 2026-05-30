@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from config.domains import topic_to_domain
+from config.topics import domain_for_topic
 
 
 DEFAULT_PANEL_BY_COUNTRY: dict[str, list[str]] = {
@@ -20,7 +20,7 @@ DOMAIN_PANEL_EXTRAS: dict[str, list[str]] = {
 
 def fixed_panel_outlets(topic: str = "", country: str = "") -> list[str]:
     normalized_country = (country or "").strip().upper()
-    domain = topic_to_domain(topic)
+    domain = domain_for_topic(topic)
 
     if normalized_country:
         outlets = list(DEFAULT_PANEL_BY_COUNTRY.get(normalized_country, []))

@@ -2,6 +2,7 @@ import hashlib
 from datetime import datetime, timezone
 
 from db.init import get_conn
+from db.topic_resolver import resolve_topic
 
 
 SEED_PRIORS: dict[str, dict[str, float | str]] = {
@@ -57,20 +58,22 @@ def seed_baselines(topics: list[str] | None = None) -> int:
     now = datetime.now(timezone.utc).isoformat()
 
     for topic in topics:
+        canonical_topic_id = resolve_topic(topic).canonical_topic_id if topic else ""
         for segment in SEGMENTS:
             row_id = hashlib.sha256(f"{topic}:{segment}".encode()).hexdigest()
             prior = SEED_PRIORS[segment]
             cursor = conn.execute(
                 """
                 INSERT OR IGNORE INTO baselines
-                (id, topic, segment, concern_level, purchase_intent,
+                (id, topic, canonical_topic_id, segment, concern_level, purchase_intent,
                  avoidance_signals, dominant_frame, seeded, sample_count,
                  is_learned, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, 1, 0, 0, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 0, 0, ?)
                 """,
                 (
                     row_id,
                     topic,
+                    canonical_topic_id,
                     segment,
                     prior["concern_level"],
                     prior["purchase_intent"],

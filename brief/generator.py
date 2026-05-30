@@ -30,6 +30,7 @@ from brief.prompt import (
 from config.settings import MIN_BRIEF_CONFIDENCE
 from db.init import get_conn
 from db.topic_queries import topic_filter_sql
+from db.topic_resolver import resolve_topic
 from delta.cluster_drift import get_cluster_drift, get_latest_cluster_drift
 from delta.engine import compute_drift
 
@@ -111,6 +112,8 @@ class ExplainerArtifact(BaseModel):
 class BriefSourceResolution:
     display_topic: str
     real_topic: str
+    canonical_topic_id: str
+    canonical_display_name: str
     country: str
     source: str
     language: str | None
@@ -1015,9 +1018,18 @@ def _resolve_source_reference(
             raise ValueError("run_id is required.")
         snapshot = get_cluster_drift(normalized_run_id)
         snapshot_topic = str(snapshot["topic"])
+        snapshot_resolution = resolve_topic(snapshot_topic)
+        canonical_topic_id = str(
+            snapshot.get("canonical_topic_id") or snapshot_resolution.canonical_topic_id
+        )
+        canonical_display_name = str(
+            snapshot.get("canonical_display_name") or snapshot_resolution.display_name
+        )
         return BriefSourceResolution(
             display_topic=snapshot_topic,
             real_topic=snapshot_topic,
+            canonical_topic_id=canonical_topic_id,
+            canonical_display_name=canonical_display_name,
             country=_normalize_country(str(snapshot.get("country", ""))),
             source=_normalize_source(str(snapshot.get("source", ""))),
             language=_normalize_language(snapshot.get("language")),
@@ -1032,6 +1044,9 @@ def _resolve_source_reference(
 
     display_topic = topic
     real_topic = "" if topic == "_all" else topic
+    topic_resolution = resolve_topic(real_topic) if real_topic else None
+    canonical_topic_id = topic_resolution.canonical_topic_id if topic_resolution else ""
+    canonical_display_name = topic_resolution.display_name if topic_resolution else display_topic
     if prefer_cluster and real_topic:
         snapshot = get_latest_cluster_drift(
             topic=real_topic,
@@ -1043,6 +1058,8 @@ def _resolve_source_reference(
             return BriefSourceResolution(
                 display_topic=display_topic,
                 real_topic=real_topic,
+                canonical_topic_id=canonical_topic_id,
+                canonical_display_name=canonical_display_name,
                 country=_normalize_country(str(snapshot.get("country", normalized_country))),
                 source=_normalize_source(str(snapshot.get("source", normalized_source))),
                 language=_normalize_language(snapshot.get("language")),
@@ -1058,6 +1075,8 @@ def _resolve_source_reference(
     return BriefSourceResolution(
         display_topic=display_topic,
         real_topic=real_topic,
+        canonical_topic_id=canonical_topic_id,
+        canonical_display_name=canonical_display_name,
         country=normalized_country,
         source=normalized_source,
         language=normalized_language,
@@ -1301,6 +1320,9 @@ def _finalize_brief(
         finalized = _apply_confidence_language(finalized, bundle.segment_rollups)
     return _copy_brief(
         finalized,
+        requested_topic=bundle.resolution.display_topic,
+        canonical_topic_id=bundle.resolution.canonical_topic_id,
+        canonical_display_name=bundle.resolution.canonical_display_name,
         confidence_context=bundle.confidence_context,
         generation_mode=generation_mode,
         calibration_weights=bundle.calibration_weights,
@@ -1474,6 +1496,9 @@ def _generate_legacy_single_pass_brief(
             _insufficient_data_brief(resolution.display_topic, generated_at),
             confidence_context=confidence_context,
             generation_mode="hierarchical_legacy",
+            requested_topic=resolution.display_topic,
+            canonical_topic_id=resolution.canonical_topic_id,
+            canonical_display_name=resolution.canonical_display_name,
             calibration_weights=BriefCalibrationWeights(
                 source_mode="legacy_drift",
                 segment_priority=_segment_priority(drift),
@@ -1522,6 +1547,9 @@ def _generate_legacy_single_pass_brief(
     brief = _apply_confidence_language(ResearchBrief(**data), drift)
     return _copy_brief(
         brief,
+        requested_topic=resolution.display_topic,
+        canonical_topic_id=resolution.canonical_topic_id,
+        canonical_display_name=resolution.canonical_display_name,
         confidence_context=confidence_context,
         generation_mode="hierarchical_legacy",
         calibration_weights=BriefCalibrationWeights(

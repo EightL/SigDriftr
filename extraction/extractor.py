@@ -5,6 +5,7 @@ from config.feeds import FEEDS
 from config.settings import BANDIT_REWARD_MODE
 from db.init import get_conn
 from db.topic_queries import topic_filter_sql
+from db.topic_resolver import resolve_topic
 from extraction.entities import extract_entities, normalize_entity_key
 from extraction.llm_client import extract_signals
 from ingestion.bandit import record_signal_reward
@@ -28,6 +29,7 @@ def run_extraction(topic: str, record_bandit_reward: bool | None = None) -> int:
         record_bandit_reward = BANDIT_REWARD_MODE == "signal"
 
     conn = get_conn()
+    canonical_topic_id = resolve_topic(topic).canonical_topic_id if topic else ""
     topic_sql, topic_params = topic_filter_sql("a", topic)
     rows = conn.execute(
         f"""
@@ -36,7 +38,11 @@ def run_extraction(topic: str, record_bandit_reward: bool | None = None) -> int:
                    (SELECT MAX(at.relevance_score)
                     FROM article_topics at
                     WHERE at.article_id = a.id
-                      AND (? = '' OR at.topic = ?)),
+                      AND (
+                          ? = ''
+                          OR at.canonical_topic_id = ?
+                          OR at.topic = ?
+                      )),
                    1.0
                ) AS topic_relevance_score
         FROM articles a
@@ -44,7 +50,7 @@ def run_extraction(topic: str, record_bandit_reward: bool | None = None) -> int:
         WHERE s.article_id IS NULL
           {topic_sql}
         """,
-        [topic, topic, *topic_params],
+        [topic, canonical_topic_id, topic, *topic_params],
     ).fetchall()
 
     processed = 0

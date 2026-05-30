@@ -16,6 +16,7 @@ class SegmentConfidence(BaseModel):
 class SignalRecord(BaseModel):
     article_id: str
     topic: str | None = None
+    canonical_topic_id: str | None = None
     title: str | None = None
     outlet: str | None = None
     country: str | None = None
@@ -45,6 +46,7 @@ class SignalRecord(BaseModel):
 class CalibrationResponse(BaseModel):
     segment: str
     topic: str
+    canonical_topic_id: str | None = None
     window_start: str
     window_days: int
     article_count: int
@@ -72,6 +74,7 @@ class CalibrationResponse(BaseModel):
 class DriftSegmentResponse(BaseModel):
     segment: str
     topic: str
+    canonical_topic_id: str | None = None
     article_count: int
     has_data: bool
     current: dict[str, float]
@@ -95,6 +98,9 @@ class DriftSegmentResponse(BaseModel):
 
 class DriftResponse(BaseModel):
     topic: str
+    requested_topic: str | None = None
+    canonical_topic_id: str | None = None
+    canonical_display_name: str | None = None
     days_back: int
     source_mix: dict[str, object] | None = None
     segments: list[DriftSegmentResponse]
@@ -133,6 +139,9 @@ class EvidenceArticle(BaseModel):
 
 class DigestResponse(BaseModel):
     topic: str
+    requested_topic: str | None = None
+    canonical_topic_id: str | None = None
+    canonical_display_name: str | None = None
     country: str
     source: str
     article_count: int
@@ -217,6 +226,7 @@ class ClusterResponse(BaseModel):
 class ClusterRunMetadata(BaseModel):
     run_id: str
     topic: str
+    canonical_topic_id: str | None = None
     country: str
     source: str
     language: str | None = None
@@ -283,6 +293,7 @@ class ClusterDriftSegmentResponse(DriftSegmentResponse):
 
 class ClusterDriftResponse(BaseModel):
     topic: str
+    canonical_topic_id: str | None = None
     country: str
     source: str
     language: str | None = None
@@ -305,6 +316,9 @@ class ClusterDriftStageResponse(BaseModel):
 
 class ScopeResponse(BaseModel):
     topic: str
+    requested_topic: str | None = None
+    canonical_topic_id: str | None = None
+    canonical_display_name: str | None = None
     country: str = ""
     source: str = ""
     language: str | None = None

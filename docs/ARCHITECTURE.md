@@ -287,11 +287,22 @@ alert_level:
 
 **Purpose:** Manage SQLite schema, connection pooling, data persistence.
 
-**Schema (6 Tables):**
+**Core schema:**
 
 **articles** (RSS article metadata)
-- id (PK), url_hash (UNIQUE, SHA-256), topic (INDEX), title, summary, outlet, published_at, collected_at
+- id (PK), url/canonical_url (UNIQUE where available), topic, canonical_topic_id,
+  title, summary, body, outlet, country, language, published_at, fetched_at
 - Stores: 1 row per unique article
+
+**topics / topic_aliases** (Canonical topic catalog)
+- topics: canonical_topic_id (PK), display_name, domain, status, merged_into
+- topic_aliases: canonical_topic_id (FK), raw_topic, normalized_topic, language,
+  source
+- Stores: curated and user-created aliases, e.g. `energie` and `energy` -> `energy`
+
+**article_topics** (Many-to-many topic links)
+- article_id (FK), topic, raw_topic, canonical_topic_id, relevance_score, matched_at
+- Stores: article-topic matches without duplicating article rows
 
 **signals** (1:1 with articles)
 - id (PK), article_id (FK), concern_level, purchase_intent, avoidance_signals, dominant_frame, seg_young_urban, seg_family, seg_senior, seg_b2b, seg_young_urban_relevance, seg_family_relevance, seg_senior_relevance, seg_b2b_relevance, raw_json (full LLM response), extracted_at
@@ -302,25 +313,27 @@ alert_level:
 - Stores: Named entities per article (if spaCy available)
 
 **segment_profiles** (Per-segment aggregates)
-- id (PK), topic (INDEX), segment, concern_level_avg, purchase_intent_avg, avoidance_signals_avg, dominant_frame, article_count, computed_at, time_window
-- UNIQUE(topic, segment, computed_at) to allow multiple snapshots
+- id (PK), topic, canonical_topic_id, segment, concern_level_avg,
+  purchase_intent_avg, avoidance_signals_avg, dominant_frame, article_count,
+  computed_at, time_window
 - Stores: Aggregated signals per segment per time window
 
 **baselines** (Reference for drift calculation)
-- id (PK), topic, segment, concern_level, purchase_intent, avoidance_signals, dominant_frame, seeded_at, learned_from_date (NULL if seeded)
-- UNIQUE(topic, segment)
-- Stores: 1 row per (topic, segment) pair
+- id (PK), topic, canonical_topic_id, segment, concern_level, purchase_intent,
+  avoidance_signals, dominant_frame, sample_count, is_learned, updated_at
+- Stores: 1 row per canonical-topic/segment pair for learned or seeded baselines
 
 **bandit_state** (LinUCB arm parameters)
 - id (PK), feed_id (UNIQUE), theta (JSON), A (JSON), b (JSON), pulls (int), last_updated
 - Stores: 1 row per feed
 
 **Indices:**
-- articles.topic (filter by topic)
+- article_topics.canonical_topic_id (topic filtering)
 - articles.url_hash (deduplication)
 - signals.article_id (1:1 join)
-- segment_profiles.topic (drift queries)
-- baselines.(topic, segment) (baseline lookup)
+- segment_profiles.(canonical_topic_id, segment) (drift queries)
+- baselines.(canonical_topic_id, segment) (baseline lookup)
+- cluster_runs/cluster_tracks/cluster_drift_runs canonical scope indexes
 
 **Configuration:**
 - WAL mode: Readers don't block writers
@@ -382,6 +395,10 @@ For complete endpoint documentation with examples, see [API.md](API.md).
 ```
 User Input: topic="energie"
     ↓
+[0] Resolve topic
+    ├─ raw topic = "energie"
+    └─ canonical_topic_id = "energy"
+    ↓
 [1] POST /collect?topic=energie
     ├─ Select feeds via collection_mode=bandit|fixed_panel|all
     ├─ Fetch feeds concurrently (timeout: 10 sec per feed)
@@ -390,6 +407,7 @@ User Input: topic="energie"
     │  └─ Semantic: embedding_similarity > 0.7
     ├─ Deduplicate by URL hash (SHA-256)
     ├─ Insert 24 articles into SQLite
+    ├─ Link articles through article_topics(raw_topic="energie", canonical_topic_id="energy")
     ├─ Record collection_runs + collection_feed_stats
     └─ Response includes selected_feeds, accepted, duplicates, and reward_mode
     ↓
@@ -413,7 +431,7 @@ User Input: topic="energie"
     │  ├─ family: {...}
     │  ├─ senior: {...}
     │  └─ b2b: {...}
-    ├─ Seed baselines (first run): baseline = current_profile
+    ├─ Seed baselines for canonical topic "energy" (first run): baseline = current_profile
     ├─ Compare (subsequent runs):
     │  └─ young_urban:
     │     ├─ Current concern: 0.52, Baseline: 0.45, Δ: +0.07

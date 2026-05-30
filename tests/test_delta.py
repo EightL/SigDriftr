@@ -149,6 +149,35 @@ def test_compute_drift_uses_weighted_segment_profiles() -> None:
         temp_dir.cleanup()
 
 
+def test_compute_drift_shares_profiles_and_baselines_across_topic_aliases() -> None:
+    temp_dir = setup_temp_db()
+    try:
+        seed_baselines(["energie"])
+        for index in range(30):
+            insert_article_with_signal(
+                article_id=f"energy-alias-{index}",
+                topic="energie",
+                concern=0.8,
+                purchase=0.2,
+                avoidance=0.3,
+                frame="fear",
+                seg_young_urban=1.0,
+                seg_family=0.0,
+                seg_senior=0.0,
+                seg_b2b=0.0,
+            )
+        compute_segment_profiles("energie", learn_baseline=True)
+
+        drift = compute_drift("energy")
+        young_urban = next(item for item in drift if item["segment"] == "young_urban")
+    finally:
+        temp_dir.cleanup()
+
+    assert young_urban["has_data"] is True
+    assert young_urban["article_count"] == 30
+    assert young_urban["baseline_is_learned"] is True
+
+
 def test_update_baseline_from_profile_blends_values() -> None:
     temp_dir = setup_temp_db()
     try:

@@ -117,6 +117,7 @@ def test_get_signals_does_not_trigger_extraction() -> None:
 
         assert len(rows) == 1
         assert rows[0]["article_id"] == "article-1"
+        assert rows[0]["canonical_topic_id"] == "inflation"
         assert rows[0]["domain"] == "civic"
         assert rows[0]["relevant_fields"] == [
             "concern_level",

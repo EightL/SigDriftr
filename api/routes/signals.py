@@ -59,6 +59,17 @@ def query_signals(
                    ''
                ) AS effective_topic,
                s.article_id, a.title, a.outlet, a.country, a.language, a.url,
+               COALESCE(
+                   a.canonical_topic_id,
+                   (SELECT at.canonical_topic_id
+                    FROM article_topics at
+                    WHERE at.article_id = a.id
+                      AND at.canonical_topic_id IS NOT NULL
+                      AND TRIM(at.canonical_topic_id) != ''
+                    ORDER BY at.matched_at DESC
+                    LIMIT 1),
+                   ''
+               ),
                s.concern_level, s.purchase_intent,
                s.avoidance_signals, s.dominant_frame, s.seg_young_urban,
                s.seg_family, s.seg_senior, s.seg_b2b,
@@ -87,12 +98,13 @@ def query_signals(
 
     records: list[dict] = []
     for row in rows:
-        raw_json = json.loads(row[19]) if row[19] else {}
+        raw_json = json.loads(row[20]) if row[20] else {}
         domain = raw_json.get("domain", "generic")
         records.append(
             {
                 "article_id": row[1],
                 "topic": row[0],
+                "canonical_topic_id": row[7] or None,
                 "title": row[2] or "[no title]",
                 "outlet": row[3] or "",
                 "country": row[4] or "",
@@ -100,22 +112,22 @@ def query_signals(
                 "url": row[6] or "",
                 "domain": domain,
                 "relevant_fields": list(get_domain_config(domain)["relevant_fields"]),
-                "concern_level": row[7],
-                "purchase_intent": row[8],
-                "avoidance_signals": row[9],
-                "dominant_frame": row[10],
-                "seg_young_urban": row[11],
-                "seg_family": row[12],
-                "seg_senior": row[13],
-                "seg_b2b": row[14],
-                "seg_young_urban_relevance": row[15],
-                "seg_family_relevance": row[16],
-                "seg_senior_relevance": row[17],
-                "seg_b2b_relevance": row[18],
+                "concern_level": row[8],
+                "purchase_intent": row[9],
+                "avoidance_signals": row[10],
+                "dominant_frame": row[11],
+                "seg_young_urban": row[12],
+                "seg_family": row[13],
+                "seg_senior": row[14],
+                "seg_b2b": row[15],
+                "seg_young_urban_relevance": row[16],
+                "seg_family_relevance": row[17],
+                "seg_senior_relevance": row[18],
+                "seg_b2b_relevance": row[19],
                 "topic_relevance_score": raw_json.get("topic_relevance_score"),
                 "topic_relevance": raw_json.get("topic_relevance"),
                 "raw_json": raw_json,
-                "extracted_at": row[20],
+                "extracted_at": row[21],
                 "segment_confidence": segment_confidence,
             }
         )

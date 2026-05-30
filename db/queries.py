@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from config.domains import get_domain_config, topic_to_domain
+from config.domains import get_domain_config
+from config.topics import domain_for_topic
 from db.init import get_conn
+from db.topic_resolver import resolve_topic
 from delta.mapper import SEGMENTS, SIGNAL_KEYS
 from delta.seeder import ensure_topic_baselines
 
@@ -15,9 +17,10 @@ def get_profile_history(
     ensure_topic_baselines(topic)
 
     conn = get_conn()
+    canonical_topic_id = resolve_topic(topic).canonical_topic_id if topic else ""
     since = (datetime.now(timezone.utc) - timedelta(days=days_back)).isoformat()
     target_segments = [segment] if segment else list(SEGMENTS)
-    domain_config = get_domain_config(topic_to_domain(topic))
+    domain_config = get_domain_config(domain_for_topic(topic))
     signal_weights = domain_config["signal_weights"]
 
     rows = conn.execute(
@@ -29,13 +32,16 @@ def get_profile_history(
             AVG(COALESCE(purchase_intent, 0.0)) AS purchase_intent,
             AVG(COALESCE(avoidance_signals, 0.0)) AS avoidance_signals
         FROM segment_profiles
-        WHERE topic = ?
+        WHERE (
+              topic = ?
+              OR (? != '' AND canonical_topic_id = ?)
+        )
           AND computed_at >= ?
           AND (? IS NULL OR segment = ?)
         GROUP BY segment, day
         ORDER BY segment ASC, day ASC
         """,
-        (topic, since, segment, segment),
+        (topic, canonical_topic_id, canonical_topic_id, since, segment, segment),
     ).fetchall()
 
     baselines = {
@@ -49,8 +55,9 @@ def get_profile_history(
             SELECT segment, concern_level, purchase_intent, avoidance_signals
             FROM baselines
             WHERE topic = ?
+               OR (? != '' AND canonical_topic_id = ?)
             """,
-            (topic,),
+            (topic, canonical_topic_id, canonical_topic_id),
         ).fetchall()
     }
 

@@ -10,6 +10,7 @@ from brief.generator import generate_brief_cached, generate_hierarchical_brief_c
 from config.settings import BANDIT_REWARD_MODE, COLLECTION_MODE
 from db.topic_queries import topic_filter_sql
 from db.init import get_conn
+from db.topic_resolver import resolve_topic
 from ingestion.bandit import record_signal_reward
 from ingestion.crawler import _crawl_async_report
 
@@ -42,8 +43,11 @@ def _scope_cache_key(
     source: str = "",
     language: str | None = None,
 ) -> PipelineScopeKey:
+    normalized_topic = topic.strip()
+    if normalized_topic:
+        normalized_topic = resolve_topic(normalized_topic).canonical_topic_id
     return (
-        topic.strip(),
+        normalized_topic,
         _normalize_country(country),
         _normalize_source(source),
         _normalize_language(language),
@@ -201,18 +205,23 @@ def _decode_reward_signals(
 def record_recent_signal_rewards(topic: str, crawl_start: str) -> int:
     conn = get_conn()
     if topic:
+        canonical_topic_id = resolve_topic(topic).canonical_topic_id
         rows = conn.execute(
             """
-            SELECT a.outlet, at.topic, a.published_at,
+            SELECT a.outlet, COALESCE(MAX(at.canonical_topic_id), MAX(at.topic)), a.published_at,
                    s.concern_level, s.purchase_intent, s.avoidance_signals, s.raw_json
             FROM signals s
             JOIN articles a ON a.id = s.article_id
             JOIN article_topics at ON at.article_id = a.id
-            WHERE at.topic = ?
+            WHERE (
+                    at.canonical_topic_id = ?
+                    OR at.topic = ?
+                  )
               AND at.matched_at >= ?
-            ORDER BY at.matched_at ASC, s.article_id ASC
+            GROUP BY s.article_id
+            ORDER BY MIN(at.matched_at) ASC, s.article_id ASC
             """,
-            (topic, crawl_start),
+            (canonical_topic_id, topic, crawl_start),
         ).fetchall()
     else:
         rows = conn.execute(
@@ -271,6 +280,11 @@ async def run_collection_cycle(
         collection_mode=collection_mode or COLLECTION_MODE,
         reward_mode=resolved_reward_mode,
     )
+    canonical_topic_id = getattr(
+        report,
+        "canonical_topic_id",
+        resolve_topic(topic).canonical_topic_id if topic else "",
+    )
     inserted = report.inserted
     processed = 0
     rewards_recorded = 0
@@ -291,6 +305,7 @@ async def run_collection_cycle(
         "extracted": processed,
         "rewards_recorded": rewards_recorded,
         "topic": topic,
+        "canonical_topic_id": canonical_topic_id,
         "country": country,
         "source": source,
         "collection_mode": report.collection_mode,
@@ -554,6 +569,13 @@ async def run_full_pipeline(
     summary = {
         "scope": {
             "topic": topic,
+            "requested_topic": topic,
+            "canonical_topic_id": (
+                topic_resolution.canonical_topic_id if topic_resolution else ""
+            ),
+            "canonical_display_name": (
+                topic_resolution.display_name if topic_resolution else None
+            ),
             "country": normalized_country,
             "source": normalized_source,
             "language": normalized_language,

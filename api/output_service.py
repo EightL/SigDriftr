@@ -11,6 +11,7 @@ from brief.generator import (
 from brief.digest import generate_digest
 from clustering.clustering_service import get_latest_cluster_run
 from delta.cluster_drift import get_cluster_drift
+from db.topic_resolver import resolve_topic
 
 from api.pipeline import get_cached_pipeline_run_summary, get_scope_counts
 from api.routes.signals import query_signals
@@ -166,6 +167,7 @@ def build_output_bundle(
     normalized_country = _normalize_country(country)
     normalized_source = _normalize_source(source)
     normalized_language = _normalize_language(language)
+    topic_resolution = resolve_topic(topic) if topic.strip() else None
 
     latest_cluster_run = None
     if topic.strip():
@@ -275,6 +277,13 @@ def build_output_bundle(
     return {
         "scope": {
             "topic": topic,
+            "requested_topic": topic,
+            "canonical_topic_id": (
+                topic_resolution.canonical_topic_id if topic_resolution else ""
+            ),
+            "canonical_display_name": (
+                topic_resolution.display_name if topic_resolution else None
+            ),
             "country": normalized_country,
             "source": normalized_source,
             "language": normalized_language,

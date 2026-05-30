@@ -6,7 +6,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from config.domains import DOMAIN_SIGNAL_KEYS, get_domain_config, topic_to_domain
+from config.domains import DOMAIN_SIGNAL_KEYS, get_domain_config
+from config.topics import domain_for_topic
 
 try:
     from tenacity import (
@@ -362,7 +363,7 @@ def extract_signals(
     topic: str = "",
     body: str = "",
 ) -> dict:
-    domain = topic_to_domain(topic)
+    domain = domain_for_topic(topic)
     domain_hint = str(get_domain_config(domain)["prompt_hint"])
     result = None
     provider = LLM_PROVIDER

@@ -7,7 +7,12 @@ import pytest
 
 import db.init
 from config.domains import get_domain_config
-from delta.cluster_drift import _assignment_metrics, get_cluster_drift, run_cluster_drift
+from delta.cluster_drift import (
+    _assignment_metrics,
+    get_cluster_drift,
+    get_latest_cluster_drift,
+    run_cluster_drift,
+)
 from extraction.embedder import get_model_name
 
 
@@ -229,6 +234,36 @@ def test_run_cluster_drift_reuses_track_ids_across_similar_runs() -> None:
         assert latest["clusters"][0]["match_type"] == "matched"
     finally:
         cleanup_temp_db(temp_dir)
+
+
+def test_cluster_drift_backfills_canonical_scope_for_legacy_runs() -> None:
+    temp_dir = setup_temp_db()
+    try:
+        insert_cluster_run("run-energy", topic="energie", n_clusters=1, n_articles=3)
+        cluster_id = insert_cluster("run-energy")
+        insert_cluster_signal(cluster_id, run_id="run-energy", topic_label="Energy prices")
+
+        run_cluster_drift("run-energy")
+
+        conn = db.init.get_conn()
+        run_canonical = conn.execute(
+            "SELECT canonical_topic_id FROM cluster_runs WHERE run_id = ?",
+            ("run-energy",),
+        ).fetchone()[0]
+        track_canonical = conn.execute(
+            "SELECT canonical_topic_id FROM cluster_tracks WHERE topic = ?",
+            ("energie",),
+        ).fetchone()[0]
+        latest = get_latest_cluster_drift(topic="energy")
+    finally:
+        cleanup_temp_db(temp_dir)
+
+    assert run_canonical == "energy"
+    assert track_canonical == "energy"
+    assert latest is not None
+    assert latest["run_id"] == "run-energy"
+    assert latest["topic"] == "energie"
+    assert latest["canonical_topic_id"] == "energy"
 
 
 def test_run_cluster_drift_is_idempotent_for_same_run() -> None:

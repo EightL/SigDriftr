@@ -6,7 +6,7 @@ import time
 import uuid
 from datetime import datetime, timezone
 
-from config.domains import get_domain_config, topic_to_domain
+from config.domains import get_domain_config
 from config.settings import (
     BASELINE_EMA_ALPHA,
     CONFIDENCE_ARTICLE_DENOMINATOR,
@@ -15,7 +15,9 @@ from config.settings import (
     MIN_ARTICLES_FOR_BASELINE,
     MIN_BRIEF_CONFIDENCE,
 )
+from config.topics import domain_for_topic
 from db.init import get_conn
+from db.topic_resolver import resolve_topic
 from delta.mapper import SEGMENTS, SIGNAL_KEYS, canonicalize_frame
 
 
@@ -270,7 +272,7 @@ def _assert_stage_four_ready(run_id: str) -> dict[str, object]:
 
     row = conn.execute(
         """
-        SELECT run_id, topic, country, source, language, status, n_clusters
+        SELECT run_id, topic, canonical_topic_id, country, source, language, status, n_clusters
         FROM cluster_runs
         WHERE run_id = ?
         """,
@@ -279,7 +281,7 @@ def _assert_stage_four_ready(run_id: str) -> dict[str, object]:
     if row is None:
         raise LookupError(f"Cluster run '{run_id}' was not found.")
 
-    cluster_count = int(row[6] or 0)
+    cluster_count = int(row[7] or 0)
     signal_count = conn.execute(
         "SELECT COUNT(*) FROM cluster_signals WHERE run_id = ?",
         (run_id,),
@@ -289,13 +291,28 @@ def _assert_stage_four_ready(run_id: str) -> dict[str, object]:
             "Cluster drift requires stage 4 extraction for every cluster in the run."
         )
 
+    canonical_topic_id = str(row[2] or "")
+    if not canonical_topic_id and row[1]:
+        canonical_topic_id = resolve_topic(str(row[1]), row[5]).canonical_topic_id
+        conn.execute(
+            """
+            UPDATE cluster_runs
+            SET canonical_topic_id = ?
+            WHERE run_id = ?
+              AND (canonical_topic_id IS NULL OR TRIM(canonical_topic_id) = '')
+            """,
+            (canonical_topic_id, row[0]),
+        )
+        conn.commit()
+
     return {
         "run_id": row[0],
         "topic": row[1],
-        "country": row[2],
-        "source": row[3],
-        "language": row[4],
-        "status": row[5],
+        "canonical_topic_id": canonical_topic_id,
+        "country": row[3],
+        "source": row[4],
+        "language": row[5],
+        "status": row[6],
         "n_clusters": cluster_count,
     }
 
@@ -372,6 +389,7 @@ def _load_current_clusters(run_id: str) -> list[dict[str, object]]:
 
 def _load_active_tracks(
     topic: str,
+    canonical_topic_id: str,
     country: str,
     source: str,
     language: str | None,
@@ -403,7 +421,10 @@ def _load_active_tracks(
             last_seen_at,
             updated_at
         FROM cluster_tracks
-        WHERE topic = ?
+        WHERE (
+              topic = ?
+              OR (? != '' AND canonical_topic_id = ?)
+        )
           AND country = ?
           AND source = ?
           AND ((? IS NULL AND language IS NULL) OR language = ?)
@@ -412,6 +433,8 @@ def _load_active_tracks(
         """,
         (
             topic,
+            canonical_topic_id,
+            canonical_topic_id,
             country,
             source,
             language,
@@ -568,17 +591,18 @@ def _insert_track(
     conn.execute(
         """
         INSERT INTO cluster_tracks
-        (track_id, topic, country, source, language, status, baseline_topic_label,
+        (track_id, topic, canonical_topic_id, country, source, language, status, baseline_topic_label,
          baseline_centroid_vector, baseline_centroid_dim, concern_level,
          purchase_intent, avoidance_signals, dominant_frame, seg_young_urban,
          seg_family, seg_senior, seg_b2b, sample_count, is_learned, missed_runs,
          last_member_count, last_mean_membership_strength, first_seen_run_id,
          last_seen_run_id, first_seen_at, last_seen_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             track_id,
             run_meta["topic"],
+            run_meta.get("canonical_topic_id") or "",
             run_meta["country"],
             run_meta["source"],
             run_meta["language"],
@@ -949,7 +973,7 @@ def _aggregate_segments(
     *,
     topic: str,
 ) -> list[dict[str, object]]:
-    domain = topic_to_domain(topic)
+    domain = domain_for_topic(topic)
     domain_config = get_domain_config(domain)
     relevant_fields = list(domain_config["relevant_fields"])
     signal_weights = domain_config["signal_weights"]
@@ -1181,12 +1205,14 @@ def run_cluster_drift(run_id: str) -> dict[str, object]:
         return get_cluster_drift_stage_result(normalized_run_id)
 
     topic = str(run_meta["topic"])
-    domain = topic_to_domain(topic)
+    canonical_topic_id = str(run_meta.get("canonical_topic_id") or "")
+    domain = domain_for_topic(canonical_topic_id or topic)
     domain_config = get_domain_config(domain)
     signal_weights = domain_config["signal_weights"]
     current_clusters = _load_current_clusters(normalized_run_id)
     active_tracks = _load_active_tracks(
         topic,
+        canonical_topic_id,
         str(run_meta["country"]),
         str(run_meta["source"]),
         run_meta["language"],
@@ -1234,7 +1260,7 @@ def run_cluster_drift(run_id: str) -> dict[str, object]:
             now=now,
         )
 
-        segments = _aggregate_segments(observations, topic=topic)
+        segments = _aggregate_segments(observations, topic=canonical_topic_id or topic)
         _persist_segment_drifts(
             conn,
             run_id=normalized_run_id,
@@ -1258,14 +1284,15 @@ def run_cluster_drift(run_id: str) -> dict[str, object]:
         conn.execute(
             """
             INSERT INTO cluster_drift_runs
-            (run_id, topic, country, source, language, observed_cluster_count,
+            (run_id, topic, canonical_topic_id, country, source, language, observed_cluster_count,
              matched_track_count, new_track_count, missing_track_count,
              segment_count, computed_at, duration_s)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 normalized_run_id,
                 topic,
+                canonical_topic_id,
                 run_meta["country"],
                 run_meta["source"],
                 run_meta["language"],
@@ -1315,7 +1342,8 @@ def get_cluster_drift(run_id: str) -> dict[str, object]:
     conn = get_conn()
     run_row = conn.execute(
         """
-        SELECT cr.run_id, cr.topic, cr.country, cr.source, cr.language, cdr.computed_at
+        SELECT cr.run_id, cr.topic, cr.canonical_topic_id, cr.country, cr.source,
+               cr.language, cdr.computed_at
         FROM cluster_runs cr
         JOIN cluster_drift_runs cdr ON cdr.run_id = cr.run_id
         WHERE cr.run_id = ?
@@ -1361,13 +1389,14 @@ def get_cluster_drift(run_id: str) -> dict[str, object]:
         (run_id,),
     ).fetchall()
 
-    domain = topic_to_domain(run_row[1])
+    domain = domain_for_topic(run_row[2] or run_row[1])
     relevant_fields = list(get_domain_config(domain)["relevant_fields"])
 
     segments = [
         {
             "segment": row[0],
             "topic": run_row[1],
+            "canonical_topic_id": run_row[2],
             "article_count": int(row[1]),
             "has_data": bool(row[2]),
             "current": {
@@ -1455,11 +1484,12 @@ def get_cluster_drift(run_id: str) -> dict[str, object]:
     ]
     return {
         "topic": run_row[1],
-        "country": run_row[2],
-        "source": run_row[3],
-        "language": run_row[4],
+        "canonical_topic_id": run_row[2],
+        "country": run_row[3],
+        "source": run_row[4],
+        "language": run_row[5],
         "run_id": run_row[0],
-        "computed_at": run_row[5],
+        "computed_at": run_row[6],
         "segments": segments,
         "clusters": observations,
     }
@@ -1473,19 +1503,29 @@ def get_latest_cluster_drift(
     language: str | None = None,
 ) -> dict[str, object] | None:
     conn = get_conn()
+    canonical_topic_id = resolve_topic(topic).canonical_topic_id if topic else ""
     normalized_country = (country or "").strip().upper()
     normalized_source = (source or "").strip().lower()
     normalized_language = ((language or "").strip().lower() or None)
     query = """
         SELECT run_id
         FROM cluster_drift_runs
-        WHERE topic = ?
+        WHERE (
+              topic = ?
+              OR (? != '' AND canonical_topic_id = ?)
+        )
           AND country = ?
           AND source = ?
         ORDER BY computed_at DESC, run_id DESC
         LIMIT 1
     """
-    params: list[object] = [topic, normalized_country, normalized_source]
+    params: list[object] = [
+        topic,
+        canonical_topic_id,
+        canonical_topic_id,
+        normalized_country,
+        normalized_source,
+    ]
     if normalized_language is not None:
         query = query.replace(
             "ORDER BY computed_at DESC, run_id DESC",

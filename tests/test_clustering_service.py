@@ -423,3 +423,42 @@ def test_run_clustering_persists_clustered_centroids_and_latest_lookup() -> None
     assert latest is not None
     assert latest["run_id"] == result["run_id"]
     assert len(latest["clusters"]) == 3
+
+
+def test_cluster_runs_are_lookupable_through_canonical_topic_aliases() -> None:
+    temp_dir = setup_temp_db()
+    try:
+        for index in range(6):
+            article_id = f"energy-article-{index}"
+            insert_article(article_id, topic="energie")
+            leading = [0.05, 0.05, 0.05]
+            leading[index % 2] = 3.0 + index * 0.1
+            insert_embedding(
+                article_id,
+                make_vector(*leading),
+                embedding_text=article_id,
+            )
+
+        with patch(
+            "clustering.clustering_service.reduce_embeddings",
+            side_effect=fake_reduce,
+        ), patch(
+            "clustering.clustering_service.cluster_reduced",
+            side_effect=fake_cluster_by_dominant_axis,
+        ):
+            result = run_clustering(
+                topic="energie",
+                window_hours=99999,
+                min_cluster_size=2,
+            )
+
+        latest = get_latest_cluster_run(topic="energy")
+    finally:
+        cleanup_temp_db(temp_dir)
+
+    assert result["status"] == "completed"
+    assert result["canonical_topic_id"] == "energy"
+    assert latest is not None
+    assert latest["run_id"] == result["run_id"]
+    assert latest["topic"] == "energie"
+    assert latest["canonical_topic_id"] == "energy"

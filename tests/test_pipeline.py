@@ -214,6 +214,7 @@ def test_run_collection_cycle_chains_extract_and_rewards() -> None:
         "extracted": 2,
         "rewards_recorded": 0,
         "topic": "inflace",
+        "canonical_topic_id": "inflation",
         "country": "",
         "source": "",
         "collection_mode": "bandit",
@@ -254,6 +255,7 @@ def test_run_collection_cycle_skips_extract_when_no_articles_are_inserted() -> N
         "extracted": 0,
         "rewards_recorded": 0,
         "topic": "inflace",
+        "canonical_topic_id": "inflation",
         "country": "",
         "source": "",
         "collection_mode": "bandit",
@@ -385,6 +387,14 @@ def test_record_recent_signal_rewards_only_replays_fresh_articles() -> None:
                 """,
                 (article_id, raw_json, extracted_at),
             )
+        conn.execute(
+            """
+            INSERT INTO article_topics
+            (article_id, topic, raw_topic, canonical_topic_id, relevance_score, matched_at)
+            VALUES ('new-1', 'inflation', 'inflation', 'inflation', 1.0,
+                    '2026-03-18T12:01:00+00:00')
+            """
+        )
         conn.commit()
 
         recorded_calls: list[dict[str, object]] = []
@@ -421,7 +431,7 @@ def test_record_recent_signal_rewards_only_replays_fresh_articles() -> None:
     assert recorded_calls == [
         {
             "outlet": "irozhlas",
-            "topic": "inflace",
+            "topic": "inflation",
             "signals": {
                 "domain": "commerce",
                 "concern_level": 0.7,

@@ -2,7 +2,7 @@ import hashlib
 import math
 from datetime import datetime, timedelta, timezone
 
-from config.domains import get_domain_config, topic_to_domain
+from config.domains import get_domain_config
 from config.source_panels import fixed_panel_outlets
 from config.settings import (
     BASELINE_EMA_ALPHA,
@@ -12,8 +12,10 @@ from config.settings import (
     MIN_BRIEF_CONFIDENCE,
     MIN_ARTICLES_FOR_BASELINE,
 )
+from config.topics import domain_for_topic
 from db.init import get_conn
 from db.topic_queries import topic_filter_sql
+from db.topic_resolver import resolve_topic
 from delta.mapper import SIGNAL_KEYS, canonicalize_frame, compute_segment_profiles
 from delta.seeder import ensure_topic_baselines
 
@@ -32,25 +34,39 @@ SEGMENT_COLUMNS = {
 
 def _get_baseline(topic: str, segment: str) -> dict | None:
     conn = get_conn()
+    canonical_topic_id = resolve_topic(topic).canonical_topic_id if topic else ""
     row_id = hashlib.sha256(f"{topic}:{segment}".encode()).hexdigest()
     row = conn.execute(
         """
-        SELECT concern_level, purchase_intent, avoidance_signals, dominant_frame,
+        SELECT id, concern_level, purchase_intent, avoidance_signals, dominant_frame,
                sample_count, is_learned, updated_at
-        FROM baselines WHERE id = ?
+        FROM baselines
+        WHERE id = ?
+           OR (
+               ? != ''
+               AND canonical_topic_id = ?
+               AND segment = ?
+           )
+        ORDER BY
+            is_learned DESC,
+            sample_count DESC,
+            CASE WHEN id = ? THEN 0 ELSE 1 END,
+            updated_at DESC
+        LIMIT 1
         """,
-        (row_id,),
+        (row_id, canonical_topic_id, canonical_topic_id, segment, row_id),
     ).fetchone()
     if row is None:
         return None
     return {
-        "concern_level": row[0],
-        "purchase_intent": row[1],
-        "avoidance_signals": row[2],
-        "dominant_frame": canonicalize_frame(row[3]),
-        "sample_count": row[4] or 0,
-        "is_learned": bool(row[5]),
-        "updated_at": row[6],
+        "id": row[0],
+        "concern_level": row[1],
+        "purchase_intent": row[2],
+        "avoidance_signals": row[3],
+        "dominant_frame": canonicalize_frame(row[4]),
+        "sample_count": row[5] or 0,
+        "is_learned": bool(row[6]),
+        "updated_at": row[7],
     }
 
 
@@ -461,7 +477,7 @@ def compute_source_normalized_drift(
         language=language,
     )
     outlet_profiles = _per_outlet_segment_profiles(rows)
-    weights = signal_weights or get_domain_config(topic_to_domain(topic))["signal_weights"]
+    weights = signal_weights or get_domain_config(domain_for_topic(topic))["signal_weights"]
     normalized: dict[str, dict[str, object]] = {}
 
     for raw_entry in raw_results:
@@ -491,6 +507,8 @@ def compute_drift(
     source: str = "",
     language: str | None = None,
 ) -> list[dict]:
+    resolution = resolve_topic(topic) if topic else None
+    canonical_topic_id = resolution.canonical_topic_id if resolution else ""
     ensure_topic_baselines(topic)
     profiles = compute_segment_profiles(
         topic,
@@ -500,7 +518,7 @@ def compute_drift(
         source=source,
         language=language,
     )
-    domain = topic_to_domain(topic)
+    domain = domain_for_topic(topic)
     domain_config = get_domain_config(domain)
     signal_weights = domain_config["signal_weights"]
     relevant_fields = list(domain_config["relevant_fields"])
@@ -531,6 +549,7 @@ def compute_drift(
                 {
                     "segment": segment,
                     "topic": topic,
+                    "canonical_topic_id": canonical_topic_id,
                     "article_count": profile["article_count"],
                     "has_data": False,
                     "current": {key: profile[key] for key in SIGNAL_KEYS},
@@ -561,6 +580,7 @@ def compute_drift(
                 {
                     "segment": segment,
                     "topic": topic,
+                    "canonical_topic_id": canonical_topic_id,
                     "article_count": profile["article_count"],
                     "has_data": True,
                     "current": {key: profile[key] for key in SIGNAL_KEYS},
@@ -599,6 +619,7 @@ def compute_drift(
             {
                 "segment": segment,
                 "topic": topic,
+                "canonical_topic_id": canonical_topic_id,
                 "article_count": profile["article_count"],
                 "has_data": True,
                 "current": {key: profile[key] for key in SIGNAL_KEYS},
@@ -658,20 +679,23 @@ def update_baseline_from_profile(
         conn = get_conn()
 
     now = datetime.now(timezone.utc).isoformat()
+    canonical_topic_id = resolve_topic(topic).canonical_topic_id if topic else ""
     row_id = hashlib.sha256(f"{topic}:{segment}".encode()).hexdigest()
     old = _get_baseline(topic, segment)
+    target_row_id = str(old["id"]) if old is not None else row_id
 
     if old is None:
         conn.execute(
             """
             INSERT INTO baselines
-            (id, topic, segment, concern_level, purchase_intent, avoidance_signals,
+            (id, topic, canonical_topic_id, segment, concern_level, purchase_intent, avoidance_signals,
              dominant_frame, seeded, sample_count, is_learned, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, 0, 1, 1, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 1, 1, ?)
             """,
             (
                 row_id,
                 topic,
+                canonical_topic_id,
                 segment,
                 round(profile["concern_level"], 4),
                 round(profile["purchase_intent"], 4),
@@ -697,7 +721,7 @@ def update_baseline_from_profile(
         UPDATE baselines
         SET concern_level=?, purchase_intent=?, avoidance_signals=?,
             dominant_frame=?, seeded=0, sample_count=sample_count + 1,
-            is_learned=1, updated_at=?
+            canonical_topic_id=?, is_learned=1, updated_at=?
         WHERE id=?
         """,
         (
@@ -705,8 +729,9 @@ def update_baseline_from_profile(
             blended["purchase_intent"],
             blended["avoidance_signals"],
             canonicalize_frame(profile["dominant_frame"]),
+            canonical_topic_id,
             now,
-            row_id,
+            target_row_id,
         ),
     )
     conn.commit()

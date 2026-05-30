@@ -30,6 +30,7 @@ from config.settings import (
 )
 from config.source_panels import select_fixed_panel_feeds
 from db.init import get_conn
+from db.topic_resolver import TopicResolution, resolve_topic
 from ingestion.bandit import record_crawl_miss, record_yield_reward, select_feeds
 
 SEMANTIC_THRESHOLD = 0.55
@@ -67,6 +68,7 @@ class FeedCrawlStats:
 class CrawlReport:
     run_id: str
     topic: str
+    canonical_topic_id: str
     country: str
     source: str
     collection_mode: str
@@ -85,6 +87,7 @@ class CrawlReport:
         return {
             "run_id": self.run_id,
             "topic": self.topic,
+            "canonical_topic_id": self.canonical_topic_id,
             "country": self.country,
             "source": self.source,
             "collection_mode": self.collection_mode,
@@ -222,6 +225,26 @@ def _relevance_score(topic: str, title: str, summary: str, body: str = "") -> fl
     return round(max(0.0, min(1.0, score)), 4)
 
 
+def _topic_match_terms(resolution: TopicResolution) -> list[str]:
+    terms = [
+        resolution.requested_topic,
+        resolution.canonical_topic_id,
+        *resolution.aliases,
+    ]
+    return list(dict.fromkeys(term for term in terms if term))
+
+
+def _best_relevance_score(
+    topic_terms: list[str],
+    title: str,
+    summary: str,
+    body: str = "",
+) -> float:
+    if not topic_terms:
+        return 1.0
+    return max(_relevance_score(term, title, summary, body) for term in topic_terms)
+
+
 def _is_relevant(score: float) -> bool:
     return score >= SEMANTIC_THRESHOLD
 
@@ -313,14 +336,15 @@ def _persist_crawl_report(conn, report: CrawlReport) -> None:
     conn.execute(
         """
         INSERT OR REPLACE INTO collection_runs
-        (run_id, topic, country, source, collection_mode, reward_mode,
+        (run_id, topic, canonical_topic_id, country, source, collection_mode, reward_mode,
          eligible_feeds, selected_feeds, inserted, accepted, duplicates,
          started_at, completed_at, duration_s)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             report.run_id,
             report.topic,
+            report.canonical_topic_id,
             report.country,
             report.source,
             report.collection_mode,
@@ -372,7 +396,7 @@ def _persist_crawl_report(conn, report: CrawlReport) -> None:
 async def _fetch_article_details(
     feed: dict,
     entry: dict,
-    topic: str,
+    topic_terms: list[str],
     initial_score: float,
     semaphore: asyncio.Semaphore,
 ) -> dict | None:
@@ -385,8 +409,8 @@ async def _fetch_article_details(
     async with semaphore:
         body, canonical_url = await asyncio.to_thread(_fetch_article_body, url, summary)
 
-    final_score = _relevance_score(topic, title, summary, body)
-    if topic and not _is_relevant(final_score):
+    final_score = _best_relevance_score(topic_terms, title, summary, body)
+    if topic_terms and not _is_relevant(final_score):
         return None
 
     return {
@@ -405,6 +429,7 @@ def _upsert_article_topic(
     conn,
     article_id: str,
     topic: str,
+    canonical_topic_id: str,
     relevance_score: float,
     matched_at: str,
 ) -> None:
@@ -412,13 +437,23 @@ def _upsert_article_topic(
         return
     conn.execute(
         """
-        INSERT INTO article_topics (article_id, topic, relevance_score, matched_at)
-        VALUES (?, ?, ?, ?)
+        INSERT INTO article_topics
+        (article_id, topic, raw_topic, canonical_topic_id, relevance_score, matched_at)
+        VALUES (?, ?, ?, ?, ?, ?)
         ON CONFLICT(article_id, topic) DO UPDATE SET
+            raw_topic = excluded.raw_topic,
+            canonical_topic_id = excluded.canonical_topic_id,
             relevance_score = MAX(article_topics.relevance_score, excluded.relevance_score),
             matched_at = excluded.matched_at
         """,
-        (article_id, topic, round(relevance_score, 4), matched_at),
+        (
+            article_id,
+            topic,
+            topic,
+            canonical_topic_id,
+            round(relevance_score, 4),
+            matched_at,
+        ),
     )
 
 
@@ -433,10 +468,13 @@ async def _crawl_async_report(
     conn = get_conn()
     started = time.perf_counter()
     now = datetime.now(timezone.utc)
+    resolution = resolve_topic(topic)
+    canonical_topic_id = resolution.canonical_topic_id
+    topic_terms = _topic_match_terms(resolution)
     normalized_mode = _normalize_collection_mode(collection_mode)
     normalized_reward_mode = _normalize_reward_mode(reward_mode)
     available_feeds, selected_feeds = _select_collection_feeds(
-        topic,
+        canonical_topic_id or topic,
         country=country,
         source=source,
         now=now,
@@ -445,6 +483,7 @@ async def _crawl_async_report(
     report = CrawlReport(
         run_id=f"collect-{uuid.uuid4().hex}",
         topic=topic,
+        canonical_topic_id=canonical_topic_id,
         country=(country or "").strip().upper(),
         source=(source or "").strip().lower(),
         collection_mode=normalized_mode,
@@ -470,14 +509,19 @@ async def _crawl_async_report(
             if normalized_reward_mode == "yield":
                 stats.reward = record_yield_reward(
                     stats.outlet,
-                    topic,
+                    canonical_topic_id or topic,
                     accepted_count=0,
                     fetch_success=False,
                     when=now,
                     feed=feed,
                 )
             else:
-                stats.reward = record_crawl_miss(stats.outlet, topic, when=now, feed=feed)
+                stats.reward = record_crawl_miss(
+                    stats.outlet,
+                    canonical_topic_id or topic,
+                    when=now,
+                    feed=feed,
+                )
             continue
 
         stats.fetch_success = True
@@ -488,15 +532,15 @@ async def _crawl_async_report(
         for entry in entries:
             title = entry.get("title", "")
             summary = entry.get("summary", "")
-            initial_score = _relevance_score(topic, title, summary)
-            if topic and not _is_relevant(initial_score):
+            initial_score = _best_relevance_score(topic_terms, title, summary)
+            if topic_terms and not _is_relevant(initial_score):
                 continue
             candidates.append((entry, initial_score))
         stats.candidates = len(candidates)
 
         enriched_entries = await asyncio.gather(
             *[
-                _fetch_article_details(feed, entry, topic, score, semaphore)
+                _fetch_article_details(feed, entry, topic_terms, score, semaphore)
                 for entry, score in candidates
             ]
         )
@@ -510,8 +554,9 @@ async def _crawl_async_report(
             cursor = conn.execute(
                 """
                 INSERT OR IGNORE INTO articles
-                (id, outlet, title, summary, body, url, canonical_url, topic, country, language, published_at, fetched_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (id, outlet, title, summary, body, url, canonical_url, topic,
+                 canonical_topic_id, country, language, published_at, fetched_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     article_id,
@@ -522,6 +567,7 @@ async def _crawl_async_report(
                     item["url"],
                     canonical_url,
                     topic,
+                    canonical_topic_id,
                     feed.get("country", "CZ"),
                     feed.get("language", "cs"),
                     item["published_at"],
@@ -541,6 +587,7 @@ async def _crawl_async_report(
                         summary = ?,
                         body = CASE WHEN COALESCE(?, '') = '' THEN body ELSE ? END,
                         canonical_url = COALESCE(?, canonical_url),
+                        canonical_topic_id = COALESCE(?, canonical_topic_id),
                         country = ?,
                         language = ?,
                         published_at = COALESCE(?, published_at),
@@ -554,6 +601,7 @@ async def _crawl_async_report(
                         item["body"],
                         item["body"],
                         canonical_url,
+                        canonical_topic_id,
                         feed.get("country", "CZ"),
                         feed.get("language", "cs"),
                         item["published_at"],
@@ -566,6 +614,7 @@ async def _crawl_async_report(
                 conn,
                 article_id,
                 topic,
+                canonical_topic_id,
                 item["relevance_score"],
                 now.isoformat(),
             )
@@ -575,7 +624,7 @@ async def _crawl_async_report(
         if normalized_reward_mode == "yield":
             stats.reward = record_yield_reward(
                 stats.outlet,
-                topic,
+                canonical_topic_id or topic,
                 accepted_count=stats.accepted,
                 avg_relevance_score=stats.avg_relevance_score,
                 duplicate_count=stats.duplicates,
@@ -584,7 +633,12 @@ async def _crawl_async_report(
                 feed=feed,
             )
         elif stats.accepted == 0:
-            stats.reward = record_crawl_miss(stats.outlet, topic, when=now, feed=feed)
+            stats.reward = record_crawl_miss(
+                stats.outlet,
+                canonical_topic_id or topic,
+                when=now,
+                feed=feed,
+            )
 
     report.completed_at = datetime.now(timezone.utc).isoformat()
     report.duration_s = round(time.perf_counter() - started, 4)

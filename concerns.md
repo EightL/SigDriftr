@@ -178,25 +178,34 @@ meaningful drift.
 
 ### 5. Topic Matching and Topic History Are Fragile
 
-**Status:** Legitimate.
+**Status:** Mitigated for the current prototype scope.
 
-`topic_to_domain()` maps topics to broad domains, and `article_topics` tracks
-topic matches, but there is no canonical topic model. "energie", "energetika",
-"energy", and "ceny energii" can become separate histories.
+SigDriftr now has a canonical topic catalog:
+
+- `topics(canonical_topic_id, display_name, domain, status, merged_into, ...)`.
+- `topic_aliases(canonical_topic_id, raw_topic, normalized_topic, language, source)`.
+- `article_topics(raw_topic, canonical_topic_id, ...)` for auditability.
+- Canonical scope columns on collection runs, articles, segment profiles,
+  baselines, cluster runs, cluster tracks, and cluster drift runs.
+
+The shared resolver in `db/topic_resolver.py` is used by collection, extraction,
+digest queries, drift, brief generation, bandit rewards, clustering, and cluster
+drift. Seed aliases cover the hackathon domains:
+
+- `energie`, `energetika`, `ceny energii`, `energy` -> `energy`
+- `inflace`, `inflation` -> `inflation`
+- `zdravotnictvi`, `zdravi`, `healthcare` -> `healthcare`
+- `politika`, `politics` -> `politics`
 
 **Risk:** Baselines fragment, article recall drops, and drift becomes dependent
-on exact user wording.
+on exact user wording. This risk is reduced for known aliases and newly created
+slug topics, but future productized use still needs a topic-lifecycle workflow
+for manual merges, splits, and deprecations.
 
-**Solutions:**
-- Add a `topics` table with `canonical_topic_id`, display name, aliases, and
-  language.
-- Normalize user topic strings before collection, extraction, drift, and brief
-  generation.
-- Use a hybrid approach:
-  - curated aliases for important topics,
-  - embedding similarity for suggestions,
-  - manual confirmation in the UI.
-- Store both `raw_topic` and `canonical_topic_id` for auditability.
+**Remaining work:**
+- Add an admin/UI workflow for alias review, topic merges, and topic splits.
+- Keep embedding similarity as a suggestion path, not in the hot resolver path.
+- Document when historical baselines are recomputed after a merge or split.
 
 ### 6. Segment Attribution Is Speculative
 

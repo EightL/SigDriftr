@@ -13,6 +13,7 @@ from clustering.hdbscan_clusterer import cluster_reduced
 from clustering.umap_reducer import reduce_embeddings
 from db.init import get_conn
 from db.topic_queries import topic_filter_sql
+from db.topic_resolver import resolve_topic
 from extraction.embedder import (
     get_expected_dim,
     get_model_name,
@@ -234,6 +235,7 @@ def _insert_run(
     *,
     run_id: str,
     topic: str,
+    canonical_topic_id: str,
     country: str,
     source: str,
     language: str | None,
@@ -253,15 +255,16 @@ def _insert_run(
     conn.execute(
         """
         INSERT INTO cluster_runs
-        (run_id, topic, country, source, language, window_start, window_end,
+        (run_id, topic, canonical_topic_id, country, source, language, window_start, window_end,
          status, n_articles, n_clusters, n_noise, umap_n_components,
          umap_n_neighbors, hdbscan_min_cluster_size, hdbscan_min_samples,
          model_name, model_version)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             run_id,
             topic,
+            canonical_topic_id,
             country,
             source,
             language,
@@ -337,6 +340,7 @@ def run_clustering(
 ) -> dict[str, object]:
     started_at = time.perf_counter()
     normalized_topic = _normalize_topic(topic)
+    canonical_topic_id = resolve_topic(normalized_topic).canonical_topic_id if normalized_topic else ""
     normalized_country = _normalize_country(country)
     normalized_source = _normalize_source(source)
     normalized_language = _normalize_language(language)
@@ -359,6 +363,7 @@ def run_clustering(
             _insert_run(
                 run_id=run_id,
                 topic=normalized_topic,
+                canonical_topic_id=canonical_topic_id,
                 country=normalized_country,
                 source=normalized_source,
                 language=normalized_language,
@@ -382,6 +387,7 @@ def run_clustering(
         return {
             "run_id": run_id,
             "topic": normalized_topic,
+            "canonical_topic_id": canonical_topic_id,
             "country": normalized_country,
             "source": normalized_source,
             "language": normalized_language,
@@ -427,6 +433,7 @@ def run_clustering(
         _insert_run(
             run_id=run_id,
             topic=normalized_topic,
+            canonical_topic_id=canonical_topic_id,
             country=normalized_country,
             source=normalized_source,
             language=normalized_language,
@@ -457,6 +464,7 @@ def run_clustering(
     return {
         "run_id": run_id,
         "topic": normalized_topic,
+        "canonical_topic_id": canonical_topic_id,
         "country": normalized_country,
         "source": normalized_source,
         "language": normalized_language,
@@ -484,6 +492,7 @@ def get_latest_cluster_run(
     language: str | None = None,
 ) -> dict[str, object] | None:
     normalized_topic = _normalize_topic(topic)
+    canonical_topic_id = resolve_topic(normalized_topic).canonical_topic_id if normalized_topic else ""
     normalized_country = _normalize_country(country)
     normalized_source = _normalize_source(source)
     normalized_language = _normalize_language(language)
@@ -492,6 +501,7 @@ def get_latest_cluster_run(
         SELECT
             run_id,
             topic,
+            canonical_topic_id,
             country,
             source,
             language,
@@ -509,7 +519,10 @@ def get_latest_cluster_run(
             model_version,
             created_at
         FROM cluster_runs
-        WHERE topic = ?
+        WHERE (
+              topic = ?
+              OR (? != '' AND canonical_topic_id = ?)
+        )
           AND country = ?
           AND source = ?
         ORDER BY created_at DESC, id DESC
@@ -517,6 +530,8 @@ def get_latest_cluster_run(
     """
     params: list[object] = [
         normalized_topic,
+        canonical_topic_id,
+        canonical_topic_id,
         normalized_country,
         normalized_source,
     ]
@@ -639,22 +654,23 @@ def get_latest_cluster_run(
     return {
         "run_id": row[0],
         "topic": row[1],
-        "country": row[2],
-        "source": row[3],
-        "language": row[4],
-        "window_start": row[5],
-        "window_end": row[6],
-        "status": row[7],
-        "n_articles": row[8],
-        "n_clusters": row[9],
-        "n_noise": row[10],
-        "umap_n_components": row[11],
-        "umap_n_neighbors": row[12],
-        "hdbscan_min_cluster_size": row[13],
-        "hdbscan_min_samples": row[14],
-        "model_name": row[15],
-        "model_version": row[16],
-        "created_at": row[17],
+        "canonical_topic_id": row[2],
+        "country": row[3],
+        "source": row[4],
+        "language": row[5],
+        "window_start": row[6],
+        "window_end": row[7],
+        "status": row[8],
+        "n_articles": row[9],
+        "n_clusters": row[10],
+        "n_noise": row[11],
+        "umap_n_components": row[12],
+        "umap_n_neighbors": row[13],
+        "hdbscan_min_cluster_size": row[14],
+        "hdbscan_min_samples": row[15],
+        "model_name": row[16],
+        "model_version": row[17],
+        "created_at": row[18],
         "clusters": clusters,
         "noise_members": noise_members,
     }

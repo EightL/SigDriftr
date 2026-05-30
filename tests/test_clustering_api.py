@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -278,6 +279,7 @@ def test_cluster_drift_route_passes_scope_filters_through() -> None:
 
     payload = {
         "topic": "inflace",
+        "canonical_topic_id": "inflation",
         "country": "DE",
         "source": "spiegel",
         "language": "de",
@@ -381,12 +383,90 @@ def test_cluster_drift_route_passes_scope_filters_through() -> None:
 
     validated = ClusterDriftResponse.model_validate(result)
     assert validated.run_id == "run-drift-2"
+    assert validated.canonical_topic_id == "inflation"
     assert validated.segments[0].direction == "rising"
     mock_latest.assert_called_once_with(
         topic="inflace",
         country="DE",
         source="spiegel",
         language="de",
+    )
+
+
+def test_drift_route_exposes_requested_and_canonical_topic_metadata() -> None:
+    pytest.importorskip("fastapi")
+    from api.models import DriftResponse
+    from api.routes import calibration as calibration_route
+
+    segment = {
+        "segment": "senior",
+        "topic": "energy",
+        "canonical_topic_id": "energy",
+        "article_count": 12,
+        "has_data": True,
+        "current": {
+            "concern_level": 0.7,
+            "purchase_intent": 0.2,
+            "avoidance_signals": 0.3,
+        },
+        "baseline": {
+            "concern_level": 0.6,
+            "purchase_intent": 0.25,
+            "avoidance_signals": 0.2,
+        },
+        "deltas": {
+            "concern_level": 0.1,
+            "purchase_intent": -0.05,
+            "avoidance_signals": 0.1,
+        },
+        "drift_magnitude": 0.2,
+        "frame_shift": False,
+        "alert_level": "mild",
+        "dominant_frame": "fear",
+        "baseline_frame": "fear",
+        "confidence": 0.7,
+        "baseline_is_learned": True,
+        "baseline_sample_count": 32,
+        "baseline_age_days": 1,
+        "status": "ready",
+        "domain": "commerce",
+        "relevant_fields": [
+            "concern_level",
+            "purchase_intent",
+            "avoidance_signals",
+        ],
+    }
+
+    with patch(
+        "api.routes.calibration.resolve_topic",
+        return_value=SimpleNamespace(
+            canonical_topic_id="energy",
+            display_name="Energy",
+        ),
+    ), patch(
+        "api.routes.calibration.compute_drift",
+        return_value=[segment],
+    ) as mock_drift:
+        result = calibration_route.get_drift(
+            topic="energie",
+            days_back=14,
+            country="CZ",
+            source="irozhlas",
+            language="cs",
+        )
+
+    validated = DriftResponse.model_validate(result)
+    assert validated.topic == "energie"
+    assert validated.requested_topic == "energie"
+    assert validated.canonical_topic_id == "energy"
+    assert validated.canonical_display_name == "Energy"
+    assert validated.segments[0].canonical_topic_id == "energy"
+    mock_drift.assert_called_once_with(
+        "energie",
+        days_back=14,
+        country="CZ",
+        source="irozhlas",
+        language="cs",
     )
 
 

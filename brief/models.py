@@ -45,6 +45,9 @@ class BriefCalibrationWeights(BaseModel):
 
 class ResearchBrief(BaseModel):
     topic: str
+    requested_topic: str | None = None
+    canonical_topic_id: str | None = None
+    canonical_display_name: str | None = None
     status: Literal["insufficient_data", "warming", "ready"] = Field(
         description="Whether the brief is a data notice, an exploratory result, or ready for normal use."
     )

@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from api.models import DigestResponse
 from brief.generator import OLLAMA_MODEL, _call_ollama_json
 from db.topic_queries import get_digest_articles
+from db.topic_resolver import resolve_topic
 
 
 _DIGEST_PROMPT_TEMPLATE = """IMPORTANT: Your entire response MUST be in English.
@@ -55,9 +56,13 @@ def _fallback_digest(
     articles: list[dict],
 ) -> DigestResponse:
     generated_at = datetime.now(timezone.utc).isoformat()
+    resolution = resolve_topic(topic)
     if not articles:
         return DigestResponse(
             topic=topic,
+            requested_topic=topic,
+            canonical_topic_id=resolution.canonical_topic_id,
+            canonical_display_name=resolution.display_name,
             country=country or "all",
             source=source or "all",
             article_count=0,
@@ -80,6 +85,9 @@ def _fallback_digest(
     top_titles = [article["title"] for article in articles[:3]]
     return DigestResponse(
         topic=topic,
+        requested_topic=topic,
+        canonical_topic_id=resolution.canonical_topic_id,
+        canonical_display_name=resolution.display_name,
         country=country or "all",
         source=source or "all",
         article_count=len(articles),
@@ -118,6 +126,7 @@ def generate_digest(
     source: str = "",
     limit: int = 8,
 ) -> DigestResponse:
+    resolution = resolve_topic(topic)
     articles = get_digest_articles(topic, country=country, source=source, limit=limit)
     fallback = _fallback_digest(topic, country, source, articles)
     if not articles:
@@ -142,6 +151,9 @@ def generate_digest(
             return fallback
         return DigestResponse(
             topic=topic,
+            requested_topic=topic,
+            canonical_topic_id=resolution.canonical_topic_id,
+            canonical_display_name=resolution.display_name,
             country=country or "all",
             source=source or "all",
             article_count=len(articles),

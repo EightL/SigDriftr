@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 
 from db.init import get_conn
 from db.topic_queries import topic_filter_sql
+from db.topic_resolver import resolve_topic
 
 
 SEGMENTS = ["young_urban", "family", "senior", "b2b"]
@@ -53,6 +54,7 @@ def compute_segment_profiles(
     language: str | None = None,
 ) -> list[dict]:
     conn = get_conn()
+    canonical_topic_id = resolve_topic(topic).canonical_topic_id if topic else ""
     since = _window_start(days_back)
     normalized_country = (country or "").strip().upper()
     normalized_source = (source or "").strip().lower()
@@ -123,14 +125,15 @@ def compute_segment_profiles(
         conn.execute(
             """
             INSERT OR REPLACE INTO segment_profiles
-            (id, topic, segment, window_start, window_days,
+            (id, topic, canonical_topic_id, segment, window_start, window_days,
              concern_level, purchase_intent, avoidance_signals,
              dominant_frame, article_count, computed_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 profile_id,
                 topic,
+                canonical_topic_id,
                 segment,
                 window_start_str,
                 days_back,
@@ -147,6 +150,7 @@ def compute_segment_profiles(
             {
                 "segment": segment,
                 "topic": topic,
+                "canonical_topic_id": canonical_topic_id,
                 "window_start": window_start_str,
                 "window_days": days_back,
                 "article_count": article_count,

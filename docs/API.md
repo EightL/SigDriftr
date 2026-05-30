@@ -2,10 +2,29 @@
 
 ## Overview
 
-SigDriftr exposes 8 REST endpoints for collecting articles, extracting signals, computing drift, and generating research briefs. All responses are JSON format.
+SigDriftr exposes REST endpoints for collecting articles, extracting signals,
+computing drift, clustering storylines, and generating analyst-facing summaries.
+All responses are JSON format.
 
 **Base URL:** `http://localhost:8000`  
 **OpenAPI UI:** `http://localhost:8000/docs`
+
+### Topic Normalization
+
+All topic-scoped endpoints accept the user-facing `topic` string as requested,
+then resolve it to a shared `canonical_topic_id`. For example, `energie`,
+`energetika`, `ceny energii`, and `energy` resolve to canonical topic `energy`.
+The raw request string is retained for auditability, while collection runs,
+article-topic links, baselines, bandit rewards, cluster runs, cluster tracks,
+drift runs, summaries, and briefs use the canonical id for shared history.
+
+Responses that expose topic scope include:
+
+- `topic`: the visible topic for that endpoint, usually the request string or
+  stored run topic.
+- `requested_topic`: the raw topic passed by the caller, when applicable.
+- `canonical_topic_id`: the stable shared scope key.
+- `canonical_display_name`: a human-readable canonical label.
 
 ---
 
@@ -31,6 +50,7 @@ curl -X POST "http://localhost:8000/collect?topic=energie"
 ```json
 {
   "topic": "energie",
+  "canonical_topic_id": "energy",
   "inserted": 22,
   "extracted": 22,
   "rewards_recorded": 0,
@@ -45,6 +65,8 @@ curl -X POST "http://localhost:8000/collect?topic=energie"
 **Notes:**
 - Two-pass filtering: direct string match + semantic similarity (if available)
 - Articles deduplicated by URL hash (SHA-256)
+- Articles keep both `raw_topic` and `canonical_topic_id`; aliases share the
+  same article history without duplicating article rows
 - `bandit` selection uses LinUCB; `fixed_panel` and `all` are available for reproducible eval/demo runs
 - Default bandit rewards use non-LLM article yield, relevance, and duplicate-adjusted collection results
 - Concurrent feed fetching (timeout: 10 sec per feed)
@@ -55,7 +77,61 @@ curl -X POST "http://localhost:8000/collect?topic=energie"
 
 ---
 
-### 2. POST /extract - Extract Behavioral Signals
+### 2. GET /summaries - Generate Citation-First Digest
+
+**Purpose:** Return a concise article digest for a topic/country/source scope.
+
+**Request:**
+```bash
+curl "http://localhost:8000/summaries?topic=energie&country=CZ&limit=8"
+```
+
+**Query Parameters:**
+- `topic` (string, required): Topic keyword or alias
+- `country` (string, optional): `CZ`, `DE`, or `GLOBAL`
+- `source` (string, optional): specific outlet id
+- `limit` (integer, default 8): Maximum articles to cite
+
+**Response (200 OK):**
+```json
+{
+  "topic": "energie",
+  "requested_topic": "energie",
+  "canonical_topic_id": "energy",
+  "canonical_display_name": "Energy",
+  "country": "CZ",
+  "source": "all",
+  "article_count": 8,
+  "generated_at": "2026-03-18T17:50:00Z",
+  "sources_used": ["irozhlas", "ct24"],
+  "summary_headline": "Energy coverage focuses on prices and supply",
+  "summary_text": "Recent Czech coverage emphasizes household costs and grid resilience.",
+  "key_points": [
+    "The top-ranked article is from iRozhlas.",
+    "Coverage is concentrated in two outlets.",
+    "The digest cites the source articles separately."
+  ],
+  "articles": [
+    {
+      "article_id": "abc123",
+      "title": "Ceny energií znovu rostou",
+      "url": "https://example.test/story",
+      "outlet": "irozhlas",
+      "country": "CZ",
+      "published_at": "2026-03-18T10:00:00Z",
+      "relevance_score": 0.94
+    }
+  ]
+}
+```
+
+**Notes:**
+- Uses `article_topics.canonical_topic_id`, so aliases share the same digest pool
+- Falls back to a deterministic digest if the local LLM is unavailable
+
+---
+
+### 3. POST /extract - Extract Behavioral Signals
 
 **Purpose:** Run LLM-based signal extraction on collected articles
 
@@ -111,7 +187,7 @@ curl -X POST "http://localhost:8000/extract?topic=energie"
 
 ---
 
-### 3. GET /signals - Retrieve Article-Level Signals
+### 4. GET /signals - Retrieve Article-Level Signals
 
 **Purpose:** Get extracted behavioral signals per article
 
@@ -134,6 +210,7 @@ curl "http://localhost:8000/signals?topic=energie&limit=10&offset=0"
     {
       "article_id": "abc123",
       "title": "Nová solární farma v Česku",
+      "canonical_topic_id": "energy",
       "outlet": "irozhlas",
       "concern_level": 0.52,
       "purchase_intent": 0.41,
@@ -168,7 +245,7 @@ curl "http://localhost:8000/signals?topic=energie&limit=10&offset=0"
 
 ---
 
-### 4. GET /calibration/{topic}/{segment} - Get Current Segment Profile
+### 5. GET /calibration/{topic}/{segment} - Get Current Segment Profile
 
 **Purpose:** Get aggregated signal metrics for a specific audience segment
 
@@ -212,7 +289,7 @@ curl "http://localhost:8000/calibration/energie/young_urban?days_back=7"
 
 ---
 
-### 5. GET /drift/{topic} - Compute Drift from Baseline
+### 6. GET /drift/{topic} - Compute Drift from Baseline
 
 **Purpose:** Detect signal changes relative to baseline profiles
 
@@ -231,6 +308,9 @@ curl "http://localhost:8000/drift/energie?days_back=7"
 ```json
 {
   "topic": "energie",
+  "requested_topic": "energie",
+  "canonical_topic_id": "energy",
+  "canonical_display_name": "Energy",
   "days_back": 7,
   "source_mix": {
     "current": {
@@ -247,6 +327,8 @@ curl "http://localhost:8000/drift/energie?days_back=7"
   "segments": [
     {
       "segment": "young_urban",
+      "topic": "energy",
+      "canonical_topic_id": "energy",
       "current": {
         "concern_level": 0.52,
         "purchase_intent": 0.41,
@@ -296,8 +378,8 @@ curl "http://localhost:8000/drift/energie?days_back=7"
 
 **Notes:**
 - Computes segment profiles if missing
-- Seeds baselines on first run (baseline = current profile)
-- On subsequent runs, compares to stored baseline
+- Seeds baselines on first run for the canonical topic scope
+- On subsequent runs, compares to stored canonical-topic baselines
 - Drift magnitude = 0.333 * |Δ concern| + 0.333 * |Δ purchase| + 0.334 * |Δ avoidance|
 - Frame shift indicates change in dominant narrative
 - Confidence is a coverage/baseline readiness heuristic, not calibrated correctness
@@ -310,7 +392,7 @@ curl "http://localhost:8000/drift/energie?days_back=7"
 
 ---
 
-### 6. GET /brief/{topic} - Generate Research Brief
+### 7. GET /brief/{topic} - Generate Research Brief
 
 **Purpose:** Generate concise research brief with testable hypotheses
 
@@ -326,6 +408,9 @@ curl "http://localhost:8000/brief/energie"
 ```json
 {
   "topic": "energie",
+  "requested_topic": "energie",
+  "canonical_topic_id": "energy",
+  "canonical_display_name": "Energy",
   "generated_at": "2026-03-18T17:50:00Z",
   "summary": "Czech public opinion on renewable energy is shifting from caution to opportunity framing. Young urban and B2B audiences show strongest enthusiasm, while family segment remains concerned about costs.",
   "hypotheses": [
@@ -352,6 +437,7 @@ curl "http://localhost:8000/brief/energie"
 **Notes:**
 - Always returns 200 OK (even if LLM fails, returns fallback brief)
 - Caches results for 30 minutes (subsequent calls return cached result)
+- Uses canonical topic scope for drift, cluster snapshots, and cached briefs
 - First call: 1-2 minutes (LLM inference)
 - Cached calls: <10ms
 - Uses qwen2.5:7b-instruct for generation
@@ -362,7 +448,28 @@ curl "http://localhost:8000/brief/energie"
 
 ---
 
-### 7. GET /health - System Health Check
+### 8. Cluster Pipeline Endpoints
+
+**Purpose:** Build and inspect cluster-aware storyline drift.
+
+Common calls:
+
+```bash
+curl -X POST "http://localhost:8000/pipeline/cluster?topic=energie"
+curl -X POST "http://localhost:8000/pipeline/cluster/signals?run_id=<cluster_run_id>"
+curl -X POST "http://localhost:8000/pipeline/cluster/drift?run_id=<cluster_run_id>"
+curl "http://localhost:8000/pipeline/clusters/latest?topic=energy"
+curl "http://localhost:8000/drift/clusters/energy"
+```
+
+Cluster run and cluster drift responses include `canonical_topic_id`. Latest-run
+lookups accept any configured alias and return the stored run topic plus the
+canonical id. This means a run created for `energie` is discoverable through
+`energy`, and cluster tracks are shared across aliases.
+
+---
+
+### 9. GET /health - System Health Check
 
 **Purpose:** Verify system health and dependencies
 
@@ -393,7 +500,7 @@ curl "http://localhost:8000/health"
 
 ---
 
-### 8. GET /ui - Demo Dashboard
+### 10. GET /ui - Demo Dashboard
 
 **Purpose:** Interactive web UI for analyzing topics
 

@@ -6,13 +6,14 @@ from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from typing import Sequence
 
-from config.domains import DOMAIN_SIGNAL_KEYS, DOMAINS, get_domain_config, topic_to_domain
+from config.domains import DOMAIN_SIGNAL_KEYS, DOMAINS, get_domain_config
 from config.feeds import FEEDS
 from config.settings import (
     BANDIT_ALPHA,
     BANDIT_MAX_FEEDS_PER_CRAWL,
     BANDIT_TIME_BUCKET_HOURS,
 )
+from config.topics import domain_for_topic
 from db.init import get_conn
 
 
@@ -103,7 +104,7 @@ def build_context_vector(
         _TIME_BUCKET_COUNT - 1,
         resolved.hour // BANDIT_TIME_BUCKET_HOURS,
     )
-    domain = topic_to_domain(topic)
+    domain = domain_for_topic(topic)
 
     vector = [0.0 for _ in range(_CONTEXT_DIM)]
     vector[0] = 1.0
@@ -269,7 +270,7 @@ def update_feed_reward(
 
 
 def reward_from_signals(topic: str, signals: dict) -> float:
-    domain = str(signals.get("domain") or topic_to_domain(topic))
+    domain = str(signals.get("domain") or domain_for_topic(topic))
     weights = get_domain_config(domain)["signal_weights"]
     reward = sum(
         float(weights.get(key, 0.0)) * float(signals.get(key, 0.0))
@@ -348,7 +349,7 @@ def warm_start_from_history(topic: str = "", limit: int | None = None) -> int:
     conn = get_conn()
     query = """
         SELECT a.outlet,
-               COALESCE(at.topic, a.topic, '') AS effective_topic,
+               COALESCE(at.canonical_topic_id, a.canonical_topic_id, at.topic, a.topic, '') AS effective_topic,
                a.published_at,
                s.raw_json,
                s.concern_level,
@@ -356,11 +357,33 @@ def warm_start_from_history(topic: str = "", limit: int | None = None) -> int:
                s.avoidance_signals
         FROM signals s
         JOIN articles a ON a.id = s.article_id
-        LEFT JOIN article_topics at ON at.article_id = a.id AND (? != '' AND at.topic = ?)
-        WHERE (? = '' OR at.topic = ?)
+        LEFT JOIN article_topics at
+          ON at.article_id = a.id
+         AND (
+             ? != ''
+             AND (
+                 at.canonical_topic_id = ?
+                 OR at.topic = ?
+             )
+         )
+        WHERE (
+            ? = ''
+            OR at.canonical_topic_id = ?
+            OR at.topic = ?
+        )
         ORDER BY s.extracted_at ASC, s.article_id ASC
     """
-    params: list[object] = [topic, topic, topic, topic]
+    from db.topic_resolver import resolve_topic
+
+    canonical_topic_id = resolve_topic(topic).canonical_topic_id if topic else ""
+    params: list[object] = [
+        topic,
+        canonical_topic_id,
+        topic,
+        topic,
+        canonical_topic_id,
+        topic,
+    ]
     if limit is not None:
         query += " LIMIT ?"
         params.append(limit)

@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import db.init
 from brief.generator import OLLAMA_MODEL, clear_brief_cache, generate_brief
+from brief.models import ResearchBrief
 from delta.mapper import compute_segment_profiles
 from delta.seeder import seed_baselines
 
@@ -275,6 +276,87 @@ def test_run_collection_cycle_skips_extract_when_no_articles_are_inserted() -> N
         reward_mode="yield",
     )
     mock_rewards.assert_not_called()
+
+
+def test_run_full_pipeline_includes_canonical_topic_scope() -> None:
+    temp_dir = setup_temp_db()
+    brief = ResearchBrief(
+        **{
+            **build_brief_payload("inflace", "family", "mild"),
+            "status": "warming",
+        }
+    )
+    try:
+        with patch(
+            "api.pipeline.run_collection_cycle",
+            new=AsyncMock(
+                return_value={
+                    "inserted": 0,
+                    "extracted": 0,
+                    "rewards_recorded": 0,
+                    "topic": "inflace",
+                    "canonical_topic_id": "inflation",
+                    "country": "",
+                    "source": "",
+                    "collection_mode": "bandit",
+                    "reward_mode": "yield",
+                    "run_id": "collect-test",
+                    "eligible_feeds": [],
+                    "selected_feeds": [],
+                    "accepted": 0,
+                    "duplicates": 0,
+                    "feed_stats": [],
+                },
+            ),
+        ), patch(
+            "extraction.embedding_service.embed_pending_articles",
+            return_value={
+                "model_name": "test-model",
+                "embedding_dim": 3,
+                "selected": 0,
+                "embedded": 0,
+                "already_current": 0,
+                "retried_failed": 0,
+                "stale_reembedded": 0,
+                "failed": 0,
+                "duration_s": 0.0,
+            },
+        ), patch(
+            "clustering.clustering_service.run_clustering",
+            return_value={
+                "run_id": None,
+                "topic": "inflace",
+                "country": "",
+                "source": "",
+                "language": None,
+                "window_start": RECENT_TS,
+                "window_end": RECENT_TS,
+                "status": "skipped_small_sample",
+                "n_articles": 0,
+                "n_clusters": 0,
+                "n_noise": 0,
+                "model_name": "test-model",
+                "model_version": None,
+                "umap_n_components": 0,
+                "umap_n_neighbors": 0,
+                "hdbscan_min_cluster_size": 3,
+                "hdbscan_min_samples": 0,
+                "duration_s": 0.0,
+            },
+        ), patch(
+            "api.pipeline.generate_brief_cached",
+            return_value=brief,
+        ), patch(
+            "api.pipeline.get_scope_counts",
+            return_value={"article_count": 0, "signal_count": 0, "embedding_count": 0},
+        ):
+            result = asyncio.run(pipeline_helpers.run_full_pipeline("inflace"))
+    finally:
+        cleanup_temp_db(temp_dir)
+
+    assert result["scope"]["canonical_topic_id"] == "inflation"
+    assert result["scope"]["canonical_display_name"] == "Inflation"
+    assert result["brief_status"] == "warming"
 
 
 def test_trust_state_smoke_path_covers_cold_warming_and_ready() -> None:

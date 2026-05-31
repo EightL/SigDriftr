@@ -7,7 +7,7 @@ SigDriftr is a modular signal extraction and drift detection pipeline designed t
 ```
 RSS Feeds → Article Collection → Semantic Filtering → Storage
     ↓
-LLM Signal Extraction → Behavioral Metrics → Named Entity Enrichment
+LLM Signal Extraction → Coverage Framing Metrics → Named Entity Enrichment
     ↓
 Segment Aggregation → Baseline Comparison → Drift Detection
     ↓
@@ -117,7 +117,7 @@ Fallback: If embedding model unavailable, only direct match applies (silent degr
 
 ### 2. Extraction (`extraction/`)
 
-**Purpose:** Extract behavioral signals from article text using local LLM inference.
+**Purpose:** Extract article-level coverage framing signals from article text using local LLM inference.
 
 **Input:** Articles without signals
 **Output:** Signals (8-field schema) + optional named entities
@@ -130,9 +130,9 @@ Fallback: If embedding model unavailable, only direct match applies (silent degr
 **Signal Schema (8 fields):**
 ```json
 {
-  "concern_level": 0.0-1.0,        # How worried is the public?
-  "purchase_intent": 0.0-1.0,      # Likelihood to buy/act?
-  "avoidance_signals": 0.0-1.0,    # Desire to avoid/shun?
+  "concern_level": 0.0-1.0,        # Concern/risk framing intensity
+  "purchase_intent": 0.0-1.0,      # Article-level purchase/action framing
+  "avoidance_signals": 0.0-1.0,    # Avoidance or risk-avoidance framing
   "dominant_frame": "fear|opportunity|conflict|neutral",
   "seg_young_urban_relevance": 0.0-1.0,  # Independent relevance to young_urban
   "seg_family_relevance": 0.0-1.0,       # Independent relevance to family
@@ -178,7 +178,7 @@ Fallback: If embedding model unavailable, only direct match applies (silent degr
 
 ### 3. Delta (`delta/`)
 
-**Purpose:** Aggregate signals by audience segment and detect drift from baseline profiles.
+**Purpose:** Aggregate signals by segment relevance group and detect drift from baseline profiles.
 
 **Input:** Signals from SQLite
 **Output:** Segment profiles, drift data, alert levels
@@ -483,7 +483,7 @@ User Input: topic="energie"
 - **Cons:** Requires GPU, smaller models than cloud APIs, ~1-2 sec latency
 - **Alternative:** OpenAI API (higher quality, higher cost)
 
-### 4. Four Audience Segments
+### 4. Four Segment Relevance Groups
 **Choice:** young_urban, family, senior, b2b
 - **Rationale:** Domain expertise from Lakmoos; balance between granularity and data availability
 - **Customizable:** Add/remove by modifying `config/feeds.py` and schemas

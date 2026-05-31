@@ -123,24 +123,19 @@ signals.
 
 ### 3. Bandit Reward Is Circular
 
-**Status:** Legitimate.
+**Status:** Mostly mitigated.
 
-`ingestion/bandit.py` computes feed reward from extracted signals. Since those
-signals are produced by the LLM, the bandit learns which feeds produce stronger
-LLM-scored signals, not necessarily which feeds are more useful or accurate.
-`warm_start_from_history()` repeats the same issue by replaying historical LLM
-signals as rewards.
+The default feed reward is now non-LLM collection yield: accepted article count,
+topic relevance, and duplicate-adjusted yield. Fixed-panel collection is also
+available for evaluation. Signal-strength rewards still exist, but only as an
+explicit experimental mode for legacy comparison.
 
 **Risk:** The feed selector can amplify LLM bias and source bias.
 
-**Solutions:**
-- Short term: change the default bandit reward to non-LLM article yield:
-  - topic relevance score,
-  - count of accepted articles,
-  - source freshness,
-  - duplicate-adjusted yield.
-- Keep signal-strength reward as an experimental mode, not the default.
-- Add a fixed-panel collection mode for evaluation so source selection is stable.
+**Remaining work:**
+- Keep signal-strength reward documented as experimental.
+- Use fixed-panel collection mode for evaluation runs so source selection is
+  stable.
 - Medium term: use human labels or "article useful for brief" labels as reward.
 - Long term: use real user feedback, such as accepted brief claims or analyst
   clicks, if this becomes an interactive product.
@@ -365,10 +360,9 @@ seg_senior_relevance,seg_b2b_relevance,annotator_id,notes
 
 ### Phase 1: Reframe and Stop Overclaiming
 
-- Use "media signal drift" everywhere.
-- Add disclaimers to README, API docs, and UI.
-- Rename segment fields in docs to segment relevance.
-- Report source mix alongside drift.
+- Mostly done. Keep future UI/API copy in "media signal drift" and
+  "segment-relevant coverage" language.
+- Keep reporting source mix alongside drift.
 
 ### Phase 2: Build the First Evaluation Set
 
@@ -381,15 +375,16 @@ seg_senior_relevance,seg_b2b_relevance,annotator_id,notes
 
 ### Phase 3: Fix the Circular Feedback Loops
 
-- Make article relevance yield the default bandit reward.
-- Add fixed-panel runs for evaluation.
+- Done for defaults: article yield is the default bandit reward and historical
+  warm start uses collection-yield rows by default.
 - Keep LLM-signal reward behind an explicit experimental flag.
 
 ### Phase 4: Improve Drift and Baselines
 
 - Add rolling reference windows.
 - Add distribution-based drift metrics.
-- Add source-normalized drift.
+- Source-normalized drift exists; next step is per-outlet learned baselines if
+  stronger normalization becomes necessary.
 - Separate readiness/coverage confidence from calibrated correctness.
 
 ### Phase 5: Validate Clusters and Briefs
@@ -398,18 +393,3 @@ seg_senior_relevance,seg_b2b_relevance,annotator_id,notes
 - Add near-duplicate detection before clustering.
 - Add claim-to-evidence validation for generated briefs.
 - Run human comparison of article-level vs cluster-aware briefs.
-
-## Portfolio Framing
-
-Good:
-
-> Experimental FastAPI pipeline for media signal drift analysis over RSS news,
-> using local LLM extraction, embeddings, clustering, and evidence-linked briefs.
-
-Avoid:
-
-> Validated public sentiment detector.
-
-Until the evaluation set and calibration work exist, the honest claim is that
-SigDriftr is a well-structured prototype for analyzing media coverage changes,
-not a proven measurement instrument.

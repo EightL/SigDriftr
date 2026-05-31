@@ -414,7 +414,7 @@ mypy .  # Type checking
 ```python
 def extract_article_signals(title: str, summary: str) -> Dict[str, float]:
     """
-    Extract behavioral signals from article text using local LLM.
+    Extract coverage framing signals from article text using local LLM.
     
     Args:
         title: Article title

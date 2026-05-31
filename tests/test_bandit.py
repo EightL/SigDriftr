@@ -15,6 +15,7 @@ from ingestion.bandit import (
     reward_from_signals,
     reward_from_yield,
     select_feeds,
+    warm_start_from_history,
 )
 from ingestion.crawler import crawl
 
@@ -364,6 +365,76 @@ def test_record_yield_reward_updates_bandit_without_signals() -> None:
     assert reward == 0.97
     assert snapshot["pulls"] == 1
     assert snapshot["total_reward"] == 0.97
+
+
+def test_warm_start_from_history_defaults_to_yield_rewards() -> None:
+    temp_dir = setup_temp_db()
+    try:
+        conn = db.init.get_conn()
+        conn.execute(
+            """
+            INSERT INTO collection_runs
+            (run_id, topic, canonical_topic_id, country, source, collection_mode,
+             reward_mode, eligible_feeds, selected_feeds, inserted, accepted,
+             duplicates, started_at, completed_at, duration_s)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "run-yield-1",
+                "inflace",
+                "inflation",
+                "CZ",
+                "",
+                "bandit",
+                "yield",
+                1,
+                1,
+                4,
+                4,
+                1,
+                "2026-05-30T10:00:00+00:00",
+                "2026-05-30T10:01:00+00:00",
+                1.0,
+            ),
+        )
+        conn.execute(
+            """
+            INSERT INTO collection_feed_stats
+            (run_id, outlet, country, language, selected, fetch_success,
+             entries_seen, candidates, accepted, inserted, duplicates,
+             avg_relevance_score, reward)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "run-yield-1",
+                "irozhlas",
+                "CZ",
+                "cs",
+                1,
+                1,
+                8,
+                4,
+                4,
+                4,
+                1,
+                0.8,
+                0.0,
+            ),
+        )
+        conn.commit()
+
+        updated = warm_start_from_history("inflace")
+        snapshot = get_bandit_snapshot("irozhlas")
+    finally:
+        cleanup_temp_db(temp_dir)
+
+    assert updated == 1
+    assert snapshot["pulls"] == 1
+    assert snapshot["total_reward"] == reward_from_yield(
+        accepted_count=4,
+        avg_relevance_score=0.8,
+        duplicate_count=1,
+    )
 
 
 def test_crawl_records_zero_reward_for_selected_feed_with_no_relevant_matches() -> None:

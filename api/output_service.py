@@ -1,7 +1,13 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
-
+from api.common import (
+    model_dump,
+    normalize_country,
+    normalize_language,
+    normalize_source,
+    pipeline_stage,
+    utc_now_iso,
+)
 from brief.generator import (
     enrich_cluster_observations,
     generate_brief_cached,
@@ -15,48 +21,6 @@ from db.topic_resolver import resolve_topic
 
 from api.pipeline import get_cached_pipeline_run_summary, get_scope_counts
 from api.routes.signals import query_signals
-
-
-def _utc_now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
-def _normalize_country(value: str | None) -> str:
-    return (value or "").strip().upper()
-
-
-def _normalize_source(value: str | None) -> str:
-    return (value or "").strip().lower()
-
-
-def _normalize_language(value: str | None) -> str | None:
-    normalized = (value or "").strip().lower()
-    return normalized or None
-
-
-def _model_dump(model: object) -> dict[str, object]:
-    if hasattr(model, "model_dump"):
-        return model.model_dump(exclude_none=True)
-    if hasattr(model, "dict"):
-        return model.dict(exclude_none=True)
-    return dict(model)
-
-
-def _pipeline_stage(
-    status: str,
-    *,
-    detail: str | None = None,
-    count: int | None = None,
-    duration_s: float | None = None,
-    metadata: dict[str, object] | None = None,
-) -> dict[str, object]:
-    return {
-        "status": status,
-        "detail": detail,
-        "count": count,
-        "duration_s": duration_s,
-        "metadata": metadata or {},
-    }
 
 
 def _fallback_pipeline_summary(
@@ -82,18 +46,18 @@ def _fallback_pipeline_summary(
     )
     cluster_status = str((latest_cluster_run or {}).get("status", "not_run"))
     if latest_cluster_run is None:
-        cluster_stage = _pipeline_stage(
+        cluster_stage = pipeline_stage(
             "pending",
             detail="No scoped cluster run exists yet.",
             count=0,
         )
-        cluster_signal_stage = _pipeline_stage(
+        cluster_signal_stage = pipeline_stage(
             "pending",
             detail="Cluster signals are unavailable until clustering runs.",
             count=0,
         )
     else:
-        cluster_stage = _pipeline_stage(
+        cluster_stage = pipeline_stage(
             "completed" if cluster_status == "completed" else cluster_status,
             detail="Loaded the latest scoped cluster run.",
             count=cluster_count,
@@ -102,7 +66,7 @@ def _fallback_pipeline_summary(
                 "created_at": latest_cluster_run.get("created_at"),
             },
         )
-        cluster_signal_stage = _pipeline_stage(
+        cluster_signal_stage = pipeline_stage(
             "completed"
             if cluster_count > 0 and cluster_signal_count == cluster_count
             else ("partial" if cluster_signal_count > 0 else "skipped"),
@@ -120,21 +84,21 @@ def _fallback_pipeline_summary(
         "brief_status": getattr(brief, "status", "insufficient_data"),
         "strongest_segment": getattr(brief, "most_affected_segment", None),
         "stages": {
-            "collect": _pipeline_stage(
+            "collect": pipeline_stage(
                 "completed" if counts["article_count"] > 0 else "pending",
                 detail="Scoped articles are available."
                 if counts["article_count"] > 0
                 else "No scoped articles are stored yet.",
                 count=counts["article_count"],
             ),
-            "extract": _pipeline_stage(
+            "extract": pipeline_stage(
                 "completed" if counts["signal_count"] > 0 else "pending",
                 detail="Scoped article signals are available."
                 if counts["signal_count"] > 0
                 else "No scoped article signals are stored yet.",
                 count=counts["signal_count"],
             ),
-            "embed": _pipeline_stage(
+            "embed": pipeline_stage(
                 "completed" if counts["embedding_count"] > 0 else "pending",
                 detail="Scoped embeddings are available."
                 if counts["embedding_count"] > 0
@@ -143,12 +107,12 @@ def _fallback_pipeline_summary(
             ),
             "cluster": cluster_stage,
             "cluster_signals": cluster_signal_stage,
-            "cluster_drift": _pipeline_stage(
+            "cluster_drift": pipeline_stage(
                 str(cluster_drift_bundle.get("status", "pending")),
                 detail=str(cluster_drift_bundle.get("message", "")),
                 count=len(((cluster_drift_bundle.get("data") or {}).get("clusters") or [])),
             ),
-            "brief": _pipeline_stage(
+            "brief": pipeline_stage(
                 getattr(brief, "status", "insufficient_data"),
                 detail=f"Resolved brief via {getattr(brief, 'generation_mode', 'unknown')} mode.",
                 count=len(getattr(brief, "hypotheses", [])),
@@ -164,9 +128,9 @@ def build_output_bundle(
     source: str = "",
     language: str | None = None,
 ) -> dict[str, object]:
-    normalized_country = _normalize_country(country)
-    normalized_source = _normalize_source(source)
-    normalized_language = _normalize_language(language)
+    normalized_country = normalize_country(country)
+    normalized_source = normalize_source(source)
+    normalized_language = normalize_language(language)
     topic_resolution = resolve_topic(topic) if topic.strip() else None
 
     latest_cluster_run = None
@@ -289,10 +253,10 @@ def build_output_bundle(
             "language": normalized_language,
         },
         "run_id": run_id,
-        "generated_at": _utc_now_iso(),
+        "generated_at": utc_now_iso(),
         "pipeline": pipeline,
-        "brief": _model_dump(brief),
-        "digest": _model_dump(digest),
+        "brief": model_dump(brief),
+        "digest": model_dump(digest),
         "cluster_drift": cluster_drift_bundle,
         "clusters": list((latest_cluster_run or {}).get("clusters", [])),
         "brief_support": brief_support,

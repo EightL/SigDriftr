@@ -19,11 +19,9 @@ from brief.models import (
 )
 from brief.prompt import (
     ANALYST_TEMPLATE,
-    BRIEF_TEMPLATE,
     EXPLAINER_TEMPLATE,
     LOW_CONFIDENCE_WARNING,
     WRITER_TEMPLATE,
-    build_context_block,
     build_json_input_block,
     confidence_label,
 )
@@ -408,30 +406,6 @@ def _get_top_articles(
     ]
 
 
-def _load_entities_for_articles(article_ids: list[str]) -> dict[str, list[dict[str, str]]]:
-    if not article_ids:
-        return {}
-
-    conn = get_conn()
-    placeholders = ", ".join("?" for _ in article_ids)
-    rows = conn.execute(
-        f"""
-        SELECT article_id, entity_text, entity_label
-        FROM article_entities
-        WHERE article_id IN ({placeholders})
-        ORDER BY article_id ASC, entity_label ASC, entity_text ASC
-        """,
-        article_ids,
-    ).fetchall()
-
-    entities_by_article: dict[str, list[dict[str, str]]] = {}
-    for article_id, entity_text, entity_label in rows:
-        entities_by_article.setdefault(article_id, []).append(
-            {"text": entity_text, "label": entity_label}
-        )
-    return entities_by_article
-
-
 def _canonicalize_segment(value: str | None) -> str:
     if not value:
         return ""
@@ -564,20 +538,20 @@ def _insufficient_data_brief(topic: str, generated_at: str) -> ResearchBrief:
         hypotheses=[
             {
                 "segment": _INSUFFICIENT_DATA_SEGMENTS[0],
-                "hypothesis": "Behavior change may become measurable once recent coverage volume increases.",
+                "hypothesis": "Coverage framing may become measurable once recent article volume increases.",
                 "signal_basis": "Insufficient recent evidence to estimate segment drift yet.",
                 "suggested_question": "Recent coverage on this topic has been noticeable to me.",
             },
             {
                 "segment": _INSUFFICIENT_DATA_SEGMENTS[1],
-                "hypothesis": "Audience reactions may diverge once the topic appears more consistently in coverage.",
+                "hypothesis": "Segment-relevant coverage may diverge once the topic appears more consistently.",
                 "signal_basis": "Additional article volume is needed before segment comparisons are reliable.",
                 "suggested_question": "I have seen enough recent coverage on this topic to form an opinion.",
             },
             {
                 "segment": _INSUFFICIENT_DATA_SEGMENTS[2],
                 "hypothesis": "Awareness and concern may remain flat until the topic reaches sustained visibility.",
-                "signal_basis": "Current window contains too little evidence for a grounded behavioral summary.",
+                "signal_basis": "Current window contains too little evidence for a grounded coverage summary.",
                 "suggested_question": "If coverage on this topic increases, it would affect my expectations or behavior.",
             },
         ],
@@ -605,7 +579,7 @@ def _derive_drift_type(top_entry: dict[str, object]) -> tuple[str, str]:
         return "frame_shift", "Frame Shift"
     if float(top_entry.get("drift_magnitude", 0.0) or 0.0) <= 0:
         return "stable", "Stable Signals"
-    return "mixed", "Behavioral Drift"
+    return "mixed", "Mixed Coverage Drift"
 
 
 def _fallback_hypothesis_segments(drift: list[dict[str, object]]) -> list[str]:
@@ -658,21 +632,21 @@ def _fallback_brief(
         hypotheses=[
             {
                 "segment": hypothesis_segments[0],
-                "hypothesis": "The most shifted segment will show measurable behavior change in follow-up research.",
+                "hypothesis": "The most shifted segment will show measurable coverage recall in follow-up research.",
                 "signal_basis": "Derived from the highest calibrated drift in the current evidence window.",
-                "suggested_question": "How much has recent coverage changed your near-term behavior?",
+                "suggested_question": "How noticeable has recent coverage on this topic been?",
             },
             {
                 "segment": hypothesis_segments[1],
                 "hypothesis": "The second-most affected segment will show a measurable shift if current coverage patterns persist.",
                 "signal_basis": "Derived from the next strongest validated segment signal.",
-                "suggested_question": "How much has recent coverage changed your expected behavior this month?",
+                "suggested_question": "How strongly does recent coverage shape your expectations this month?",
             },
             {
                 "segment": hypothesis_segments[2],
                 "hypothesis": "The third-most affected segment will show directional movement if uncertainty persists.",
                 "signal_basis": "Derived from the remaining top-ranked segment in the evidence snapshot.",
-                "suggested_question": "How likely are you to change a planned decision because of recent coverage?",
+                "suggested_question": "How relevant is recent coverage to decisions you are already considering?",
             },
         ],
         generated_at=generated_at,
@@ -1473,94 +1447,6 @@ def _generate_hierarchical_brief_artifacts(bundle: BriefBundle) -> BriefArtifact
         )
 
 
-def _generate_hierarchical_brief(bundle: BriefBundle) -> ResearchBrief:
-    return _generate_hierarchical_brief_artifacts(bundle).brief
-
-
-def _generate_legacy_single_pass_brief(
-    resolution: BriefSourceResolution,
-) -> ResearchBrief:
-    """Retained for comparison while the hierarchical path stabilizes."""
-    drift = compute_drift(
-        resolution.real_topic,
-        country=resolution.country,
-        source=resolution.source,
-        language=resolution.language,
-    )
-    generated_at = datetime.now(timezone.utc).isoformat()
-    brief_status = _brief_status_from_drift(drift)
-    confidence_context = _confidence_context_from_segments(drift)
-
-    if brief_status == "insufficient_data":
-        return _copy_brief(
-            _insufficient_data_brief(resolution.display_topic, generated_at),
-            confidence_context=confidence_context,
-            generation_mode="hierarchical_legacy",
-            requested_topic=resolution.display_topic,
-            canonical_topic_id=resolution.canonical_topic_id,
-            canonical_display_name=resolution.canonical_display_name,
-            calibration_weights=BriefCalibrationWeights(
-                source_mode="legacy_drift",
-                segment_priority=_segment_priority(drift),
-                top_cluster_priorities=[],
-            ),
-            source_scope=_source_scope(resolution),
-        )
-
-    top_articles: list[dict] = []
-    for entry in _rank_segments(drift):
-        top_articles.extend(
-            _get_top_articles(
-                resolution.real_topic,
-                str(entry["segment"]),
-                country=resolution.country,
-                source=resolution.source,
-                language=resolution.language,
-                limit=2,
-            )
-        )
-    entities_by_article = _load_entities_for_articles(
-        [article["article_id"] for article in top_articles]
-    )
-    for article in top_articles:
-        article["entities"] = entities_by_article.get(article["article_id"], [])
-
-    context_block = build_context_block(drift, top_articles, confidence_context)
-    domain = drift[0].get("domain", "generic") if drift else "generic"
-    relevant_fields = drift[0].get("relevant_fields", []) if drift else []
-
-    data = _call_ollama_json(
-        BRIEF_TEMPLATE.format(
-            topic=resolution.display_topic,
-            date=generated_at,
-            context_block=context_block,
-            domain=domain,
-            relevant_fields=", ".join(relevant_fields) if relevant_fields else "none",
-            model=OLLAMA_MODEL,
-        )
-    )
-    data = _normalize_brief_payload(data)
-    data["generated_at"] = generated_at
-    data["model_used"] = OLLAMA_MODEL
-    data["topic"] = resolution.display_topic
-    data["status"] = brief_status
-    brief = _apply_confidence_language(ResearchBrief(**data), drift)
-    return _copy_brief(
-        brief,
-        requested_topic=resolution.display_topic,
-        canonical_topic_id=resolution.canonical_topic_id,
-        canonical_display_name=resolution.canonical_display_name,
-        confidence_context=confidence_context,
-        generation_mode="hierarchical_legacy",
-        calibration_weights=BriefCalibrationWeights(
-            source_mode="legacy_drift",
-            segment_priority=_segment_priority(drift),
-            top_cluster_priorities=[],
-        ),
-        source_scope=_source_scope(resolution),
-    )
-
-
 def clear_brief_cache() -> None:
     with _cache_lock:
         _brief_cache.clear()
@@ -1587,7 +1473,7 @@ def generate_brief(
         prefer_cluster=prefer_cluster,
         require_cluster=require_cluster,
     )
-    return _generate_hierarchical_brief(_build_bundle(resolution))
+    return _generate_hierarchical_brief_artifacts(_build_bundle(resolution)).brief
 
 
 def generate_brief_cached(
@@ -1626,25 +1512,6 @@ def generate_brief_cached(
     return artifacts.brief
 
 
-def generate_hierarchical_brief(
-    *,
-    topic: str = "",
-    country: str = "",
-    source: str = "",
-    language: str | None = None,
-    run_id: str | None = None,
-) -> ResearchBrief:
-    return generate_brief(
-        topic,
-        country=country,
-        source=source,
-        language=language,
-        run_id=run_id,
-        prefer_cluster=True,
-        require_cluster=True,
-    )
-
-
 def generate_hierarchical_brief_cached(
     *,
     topic: str = "",
@@ -1662,24 +1529,6 @@ def generate_hierarchical_brief_cached(
         prefer_cluster=True,
         require_cluster=True,
     )
-
-
-def peek_cached_brief(
-    topic: str,
-    *,
-    country: str = "",
-    source: str = "",
-    language: str | None = None,
-) -> ResearchBrief | None:
-    resolution = _resolve_source_reference(
-        topic,
-        country=country,
-        source=source,
-        language=language,
-        prefer_cluster=True,
-        require_cluster=False,
-    )
-    return _get_cached_brief_for_resolution(resolution)
 
 
 def get_brief_support(
@@ -1718,55 +1567,3 @@ def get_brief_support(
         run_id=cache_run_id,
     )
     return dict(artifacts.support)
-
-
-def get_brief_summary(
-    topic: str,
-    *,
-    country: str = "",
-    source: str = "",
-    language: str | None = None,
-) -> dict[str, object]:
-    cached = peek_cached_brief(
-        topic,
-        country=country,
-        source=source,
-        language=language,
-    )
-    if cached is not None:
-        return {
-            "topic": cached.topic,
-            "status": cached.status,
-            "alert_level": cached.alert_level,
-            "confidence_context": cached.confidence_context,
-        }
-
-    resolution = _resolve_source_reference(
-        topic,
-        country=country,
-        source=source,
-        language=language,
-        prefer_cluster=True,
-        require_cluster=False,
-    )
-    if resolution.source_mode == "cluster_drift":
-        segments = list((resolution.cluster_snapshot or {}).get("segments", []))
-    else:
-        segments = compute_drift(
-            resolution.real_topic,
-            country=resolution.country,
-            source=resolution.source,
-            language=resolution.language,
-        )
-    ranked = _rank_segments(segments)
-    alert_level = (
-        _normalize_alert_level(str(ranked[0].get("alert_level", "none")))
-        if ranked
-        else "none"
-    )
-    return {
-        "topic": resolution.display_topic,
-        "status": _brief_status_from_drift(segments),
-        "alert_level": alert_level,
-        "confidence_context": _confidence_context_from_segments(segments),
-    }

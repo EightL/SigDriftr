@@ -340,7 +340,7 @@ function panelMarkup(data, slot) {
       <div class="summary-rail">
         ${metricCard("Articles", pipeline.article_count || 0, "Scoped article coverage")}
         ${metricCard("Clusters", pipeline.cluster_count || 0, "Stable event groups")}
-        ${metricCard("Strongest Segment", strongestSegment(data), "Most affected audience segment")}
+        ${metricCard("Strongest Segment", strongestSegment(data), "Segment-relevant coverage with the clearest movement")}
         ${metricCard("Brief Status", data.brief?.status || "insufficient_data", "Trust state for the current brief")}
       </div>
 

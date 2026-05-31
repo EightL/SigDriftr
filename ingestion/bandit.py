@@ -345,7 +345,63 @@ def reset_bandit_state() -> None:
     conn.commit()
 
 
-def warm_start_from_history(topic: str = "", limit: int | None = None) -> int:
+def warm_start_from_collection_history(topic: str = "", limit: int | None = None) -> int:
+    conn = get_conn()
+    query = """
+        SELECT fs.outlet,
+               COALESCE(r.canonical_topic_id, r.topic, '') AS effective_topic,
+               r.completed_at,
+               fs.accepted,
+               fs.avg_relevance_score,
+               fs.duplicates,
+               fs.fetch_success
+        FROM collection_feed_stats fs
+        JOIN collection_runs r ON r.run_id = fs.run_id
+        WHERE fs.selected = 1
+          AND (
+              ? = ''
+              OR r.canonical_topic_id = ?
+              OR r.topic = ?
+          )
+        ORDER BY r.completed_at ASC, fs.id ASC
+    """
+    from db.topic_resolver import resolve_topic
+
+    canonical_topic_id = resolve_topic(topic).canonical_topic_id if topic else ""
+    params: list[object] = [topic, canonical_topic_id, topic]
+    if limit is not None:
+        query += " LIMIT ?"
+        params.append(limit)
+
+    known_outlets = {feed["outlet"] for feed in FEEDS}
+    rows = conn.execute(query, params).fetchall()
+    updated = 0
+    for (
+        outlet,
+        article_topic,
+        completed_at,
+        accepted,
+        avg_relevance_score,
+        duplicates,
+        fetch_success,
+    ) in rows:
+        if outlet not in known_outlets:
+            continue
+        record_yield_reward(
+            outlet,
+            article_topic or topic,
+            accepted_count=accepted or 0,
+            avg_relevance_score=avg_relevance_score or 0.0,
+            duplicate_count=duplicates or 0,
+            fetch_success=bool(fetch_success),
+            when=completed_at,
+        )
+        updated += 1
+
+    return updated
+
+
+def warm_start_from_signal_history(topic: str = "", limit: int | None = None) -> int:
     conn = get_conn()
     query = """
         SELECT a.outlet,
@@ -388,10 +444,11 @@ def warm_start_from_history(topic: str = "", limit: int | None = None) -> int:
         query += " LIMIT ?"
         params.append(limit)
 
+    known_outlets = {feed["outlet"] for feed in FEEDS}
     rows = conn.execute(query, params).fetchall()
     updated = 0
     for outlet, article_topic, published_at, raw_json, concern, purchase, avoidance in rows:
-        if outlet not in {feed["outlet"] for feed in FEEDS}:
+        if outlet not in known_outlets:
             continue
         signals = json.loads(raw_json) if raw_json else {}
         if not signals:
@@ -404,3 +461,16 @@ def warm_start_from_history(topic: str = "", limit: int | None = None) -> int:
         updated += 1
 
     return updated
+
+
+def warm_start_from_history(
+    topic: str = "",
+    limit: int | None = None,
+    reward_mode: str = "yield",
+) -> int:
+    normalized = (reward_mode or "yield").strip().lower()
+    if normalized == "yield":
+        return warm_start_from_collection_history(topic=topic, limit=limit)
+    if normalized == "signal":
+        return warm_start_from_signal_history(topic=topic, limit=limit)
+    raise ValueError("Unsupported warm-start reward_mode; expected 'yield' or 'signal'.")

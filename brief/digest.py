@@ -1,8 +1,7 @@
-import json
 from datetime import datetime, timezone
 
 from api.models import DigestResponse
-from brief.generator import OLLAMA_MODEL, _call_ollama_json
+from brief.generator import _call_ollama_json
 from db.topic_queries import get_digest_articles
 from db.topic_resolver import resolve_topic
 
@@ -177,15 +176,3 @@ def generate_digest(
         )
     except Exception:
         return fallback
-
-
-def generate_digest_json(
-    topic: str,
-    country: str = "",
-    source: str = "",
-    limit: int = 8,
-) -> dict:
-    result = generate_digest(topic, country=country, source=source, limit=limit)
-    if hasattr(result, "model_dump"):
-        return result.model_dump()
-    return json.loads(result.json())

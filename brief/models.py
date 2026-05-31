@@ -6,9 +6,9 @@ SegmentKey = Literal["young_urban", "family", "senior", "b2b"]
 
 
 class SurveyHypothesis(BaseModel):
-    segment: SegmentKey = Field(description="Target audience segment")
+    segment: SegmentKey = Field(description="Segment relevance group")
     hypothesis: str = Field(
-        description="Falsifiable behavioral hypothesis (1-2 sentences)"
+        description="Falsifiable follow-up hypothesis (1-2 sentences)"
     )
     signal_basis: str = Field(
         description="Which signal drove this hypothesis (e.g. concern_level +0.18)"
@@ -52,7 +52,7 @@ class ResearchBrief(BaseModel):
         description="Whether the brief is a data notice, an exploratory result, or ready for normal use."
     )
     headline: str = Field(
-        description="8-12 word summary of the dominant behavioral shift"
+        description="8-12 word summary of the dominant coverage shift"
     )
     narrative: str = Field(
         description="2-3 sentence plain-language brief for a Lakmoos analyst"

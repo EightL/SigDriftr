@@ -14,7 +14,7 @@ from ingestion.bandit import reset_bandit_state, warm_start_from_history
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Replay historical SigDriftr signals into the feed bandit."
+        description="Replay historical SigDriftr collection rewards into the feed bandit."
     )
     parser.add_argument(
         "--topic",
@@ -32,14 +32,27 @@ def main() -> int:
         action="store_true",
         help="Clear existing bandit state before replaying history.",
     )
+    parser.add_argument(
+        "--reward-mode",
+        choices=["yield", "signal"],
+        default="yield",
+        help=(
+            "History source to replay. 'yield' uses non-LLM collection stats; "
+            "'signal' replays legacy LLM signal rewards."
+        ),
+    )
     args = parser.parse_args()
 
     get_conn()
     if args.reset:
         reset_bandit_state()
 
-    updated = warm_start_from_history(topic=args.topic, limit=args.limit)
-    print(f"Updated bandit from {updated} historical signal rows.")
+    updated = warm_start_from_history(
+        topic=args.topic,
+        limit=args.limit,
+        reward_mode=args.reward_mode,
+    )
+    print(f"Updated bandit from {updated} historical {args.reward_mode} rows.")
     return 0
 
 

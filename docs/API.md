@@ -131,7 +131,7 @@ curl "http://localhost:8000/summaries?topic=energie&country=CZ&limit=8"
 
 ---
 
-### 3. POST /extract - Extract Behavioral Signals
+### 3. POST /extract - Extract Coverage Framing Signals
 
 **Purpose:** Run LLM-based signal extraction on collected articles
 
@@ -156,7 +156,7 @@ curl -X POST "http://localhost:8000/extract?topic=energie"
 **Notes:**
 - Processes unprocessed articles only (idempotent)
 - Uses qwen2.5:7b-instruct (primary) or gemma3:1b (fallback)
-- Extracts article-level behavioral signals, independent segment relevance, and
+- Extracts article-level coverage framing signals, independent segment relevance, and
   normalized segment aggregation shares
 - Optional named entity enrichment (spaCy, if available)
 - Does not update feed bandit rewards by default. Signal-based rewards are available only when explicitly enabled as experimental behavior.
@@ -189,7 +189,7 @@ curl -X POST "http://localhost:8000/extract?topic=energie"
 
 ### 4. GET /signals - Retrieve Article-Level Signals
 
-**Purpose:** Get extracted behavioral signals per article
+**Purpose:** Get extracted coverage framing signals per article
 
 **Request:**
 ```bash
@@ -247,7 +247,7 @@ curl "http://localhost:8000/signals?topic=energie&limit=10&offset=0"
 
 ### 5. GET /calibration/{topic}/{segment} - Get Current Segment Profile
 
-**Purpose:** Get aggregated signal metrics for a specific audience segment
+**Purpose:** Get aggregated signal metrics for a specific segment relevance group
 
 **Request:**
 ```bash
@@ -412,11 +412,11 @@ curl "http://localhost:8000/brief/energie"
   "canonical_topic_id": "energy",
   "canonical_display_name": "Energy",
   "generated_at": "2026-03-18T17:50:00Z",
-  "summary": "Czech public opinion on renewable energy is shifting from caution to opportunity framing. Young urban and B2B audiences show strongest enthusiasm, while family segment remains concerned about costs.",
+  "summary": "Czech renewable energy coverage is shifting from caution to opportunity framing. Young-urban- and B2B-relevant articles show the clearest opportunity framing, while family-relevant coverage remains focused on costs.",
   "hypotheses": [
-    "Renewable energy subsidies are increasingly popular among tech-forward audiences",
-    "Cost and grid stability remain primary concerns for families with children",
-    "B2B sector sees strategic advantage in early solar adoption"
+    "Coverage aimed at tech-forward readers will keep emphasizing renewable subsidy opportunities",
+    "Family-relevant articles will continue to frame costs and grid stability as open questions",
+    "Business-relevant coverage will keep presenting early solar adoption as a strategic advantage"
   ],
   "segments": [
     {

@@ -9,10 +9,10 @@ It analyzes media coverage drift, not direct public sentiment or behavior.
 1. `ingestion/` selects RSS feeds with a contextual bandit, fetches articles, and
    keeps topic-relevant matches.
 2. `extraction/` sends article text to Google Gemma when `GOOGLE_GEMMA_API_KEY`
-   is configured, falls back to local Ollama, and stores normalized behavioral
-   signals in SQLite.
-3. `delta/` aggregates article signals into audience segment profiles and compares
-   them with learned or seeded baselines.
+   is configured, falls back to local Ollama, and stores normalized coverage
+   framing signals in SQLite.
+3. `delta/` aggregates article signals into segment-relevance profiles and
+   compares them with learned or seeded baselines.
 4. `extraction/embedding_service.py` embeds articles for cluster analysis.
 5. `clustering/` reduces embeddings with UMAP and groups them with HDBSCAN.
 6. `extraction/cluster_extractor.py` and `delta/cluster_drift.py` summarize and

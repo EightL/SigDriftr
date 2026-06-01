@@ -389,8 +389,11 @@ seg_senior_relevance,seg_b2b_relevance,annotator_id,notes
 
 ### Phase 5: Validate Clusters and Briefs
 
-- Add cluster stability reports. Centroid coherence is now persisted as
-  `cluster_signals.coherence_score`; bootstrap stability is still future work.
-- Add near-duplicate detection before clustering.
+- Cluster stability reports now exist through
+  `scripts/evaluate_cluster_stability.py`; use them to monitor ARI/NMI/AMI,
+  noise rate, and per-cluster survival over bootstrap samples.
+- Near-duplicate detection now runs before clustering and persists per-run
+  dedupe stats in `cluster_dedupe_stats`.
+- Centroid coherence is persisted as `cluster_signals.coherence_score`.
 - Add claim-to-evidence validation for generated briefs.
 - Run human comparison of article-level vs cluster-aware briefs.

@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 import asyncio
 import json
-import tempfile
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, patch
 
@@ -11,29 +10,19 @@ import pytest
 pytest.importorskip("tenacity")
 pytest.importorskip("pydantic")
 
-from brief.generator import clear_brief_cache
+from db_helpers import cleanup_temp_db as cleanup_temp_db_base
+from db_helpers import setup_temp_db as setup_temp_db_base
 
 
 RECENT_TS = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
-def setup_temp_db() -> tempfile.TemporaryDirectory:
-    temp_dir = tempfile.TemporaryDirectory()
-    db.init.DB_PATH = db.init.Path(temp_dir.name) / "sigdriftr.db"
-    if hasattr(db.init._local, "conn"):
-        db.init._local.conn.close()
-        delattr(db.init._local, "conn")
-    db.init.get_conn()
-    clear_brief_cache()
-    return temp_dir
+def setup_temp_db():
+    return setup_temp_db_base(clear_brief_cache=True)
 
 
-def cleanup_temp_db(temp_dir: tempfile.TemporaryDirectory) -> None:
-    clear_brief_cache()
-    if hasattr(db.init._local, "conn"):
-        db.init._local.conn.close()
-        delattr(db.init._local, "conn")
-    temp_dir.cleanup()
+def cleanup_temp_db(temp_dir) -> None:
+    cleanup_temp_db_base(temp_dir, clear_brief_cache=True)
 
 
 def insert_article(

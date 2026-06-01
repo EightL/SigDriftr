@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
 import hashlib
 import json
-import tempfile
 from datetime import datetime, timezone
-from pathlib import Path
 from unittest.mock import patch
 
 import db.init
 from api.routes.signals import get_signals
 from clustering.clustering_service import get_latest_cluster_run
+from db_helpers import cleanup_temp_db, setup_temp_db
 from delta.engine import compute_drift
 from delta.mapper import compute_segment_profiles
 from delta.seeder import seed_baselines
@@ -27,26 +26,7 @@ from extraction.cluster_llm_client import (
 from extraction.embedder import get_expected_dim, get_model_name
 
 
-ORIGINAL_DB_PATH = db.init.DB_PATH
 RECENT_TS = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
-
-
-def setup_temp_db() -> tempfile.TemporaryDirectory:
-    temp_dir = tempfile.TemporaryDirectory()
-    db.init.DB_PATH = Path(temp_dir.name) / "sigdriftr.db"
-    if hasattr(db.init._local, "conn"):
-        db.init._local.conn.close()
-        delattr(db.init._local, "conn")
-    db.init.get_conn()
-    return temp_dir
-
-
-def cleanup_temp_db(temp_dir: tempfile.TemporaryDirectory) -> None:
-    if hasattr(db.init._local, "conn"):
-        db.init._local.conn.close()
-        delattr(db.init._local, "conn")
-    db.init.DB_PATH = ORIGINAL_DB_PATH
-    temp_dir.cleanup()
 
 
 def make_vector(*leading: float) -> list[float]:

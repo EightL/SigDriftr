@@ -75,6 +75,25 @@ fallback rate, generation-mode distribution, and internal validation warnings.
 Goldens may embed a frozen `cluster_snapshot` so the current generator can be
 run without depending on the latest database state.
 
+## Cluster Stability
+
+Storyline clustering is validated separately from article-level extraction. The
+cluster stage now removes conservative near-duplicates before UMAP/HDBSCAN, then
+the stability evaluator reclusters bootstrap samples of that deduped input and
+reports ARI, NMI, AMI, noise-rate, and per-cluster survival summaries:
+
+```bash
+python scripts/evaluate_cluster_stability.py \
+  --topic energie \
+  --window-hours 168 \
+  --bootstrap-samples 25 \
+  --output eval/reports/cluster_stability_energie.json
+```
+
+Use this as an analyst-facing quality report, not as calibrated correctness.
+Low stability or high duplicate removal means cluster-aware briefs should be
+treated as exploratory.
+
 ## Current Baseline Results
 
 Against `czech_batch_200_semi_gold.csv`:

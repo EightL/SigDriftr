@@ -2,27 +2,17 @@
 import argparse
 import hashlib
 import sys
-import tempfile
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
 import db.init
+from db_helpers import cleanup_temp_db, setup_temp_db
 from delta.engine import compute_drift, update_baseline_from_profile
 from delta.mapper import compute_segment_profiles
 from delta.seeder import DEFAULT_TOPICS, SEGMENTS, ensure_topic_baselines, seed_baselines
 
 
 RECENT_TS = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
-
-
-def setup_temp_db() -> tempfile.TemporaryDirectory:
-    temp_dir = tempfile.TemporaryDirectory()
-    db.init.DB_PATH = db.init.Path(temp_dir.name) / "sigdriftr.db"
-    if hasattr(db.init._local, "conn"):
-        db.init._local.conn.close()
-        delattr(db.init._local, "conn")
-    db.init.get_conn()
-    return temp_dir
 
 
 def insert_article_with_signal(
@@ -88,7 +78,7 @@ def test_seed_baselines_is_idempotent() -> None:
         inserted_again = seed_baselines()
         assert inserted_again == 0
     finally:
-        temp_dir.cleanup()
+        cleanup_temp_db(temp_dir)
 
 
 def test_compute_drift_uses_weighted_segment_profiles() -> None:
@@ -146,7 +136,7 @@ def test_compute_drift_uses_weighted_segment_profiles() -> None:
             "avoidance_signals": 0.0,
         }
     finally:
-        temp_dir.cleanup()
+        cleanup_temp_db(temp_dir)
 
 
 def test_compute_drift_shares_profiles_and_baselines_across_topic_aliases() -> None:
@@ -171,7 +161,7 @@ def test_compute_drift_shares_profiles_and_baselines_across_topic_aliases() -> N
         drift = compute_drift("energy")
         young_urban = next(item for item in drift if item["segment"] == "young_urban")
     finally:
-        temp_dir.cleanup()
+        cleanup_temp_db(temp_dir)
 
     assert young_urban["has_data"] is True
     assert young_urban["article_count"] == 30
@@ -205,7 +195,7 @@ def test_update_baseline_from_profile_blends_values() -> None:
 
         assert row == (0.48, 0.27, 0.21, "fear", 0, 1, 1)
     finally:
-        temp_dir.cleanup()
+        cleanup_temp_db(temp_dir)
 
 
 def test_compute_drift_seeds_unknown_topics_on_demand() -> None:
@@ -228,7 +218,7 @@ def test_compute_drift_seeds_unknown_topics_on_demand() -> None:
         first_segment = next(entry for entry in drift if entry["segment"] == "young_urban")
         assert first_segment["baseline"] is not None
     finally:
-        temp_dir.cleanup()
+        cleanup_temp_db(temp_dir)
 
 
 def test_compute_drift_keeps_baseline_frame_key_when_baseline_missing() -> None:
@@ -250,7 +240,7 @@ def test_compute_drift_keeps_baseline_frame_key_when_baseline_missing() -> None:
         with patch("delta.engine._get_baseline", return_value=None):
             drift = compute_drift("custom-topic")
     finally:
-        temp_dir.cleanup()
+        cleanup_temp_db(temp_dir)
 
     drift_by_segment = {entry["segment"]: entry for entry in drift}
     assert drift_by_segment["young_urban"]["baseline_frame"] is None
@@ -289,7 +279,7 @@ def test_compute_segment_profiles_persists_requested_window_days() -> None:
 
         assert row == (14,)
     finally:
-        temp_dir.cleanup()
+        cleanup_temp_db(temp_dir)
 
 
 def test_frame_shift_uses_canonical_frame_labels() -> None:
@@ -315,7 +305,7 @@ def test_frame_shift_uses_canonical_frame_labels() -> None:
         assert senior["baseline_frame"] == "fear"
         assert senior["frame_shift"] is False
     finally:
-        temp_dir.cleanup()
+        cleanup_temp_db(temp_dir)
 
 
 def test_alert_level_uses_drift_magnitude() -> None:
@@ -340,7 +330,7 @@ def test_alert_level_uses_drift_magnitude() -> None:
         assert young_urban["drift_magnitude"] == 0.18
         assert young_urban["alert_level"] == "none"
     finally:
-        temp_dir.cleanup()
+        cleanup_temp_db(temp_dir)
 
 
 def test_compute_drift_uses_domain_weights_for_generic_topics() -> None:
@@ -370,7 +360,7 @@ def test_compute_drift_uses_domain_weights_for_generic_topics() -> None:
         assert young_urban["drift_magnitude"] == 0.12
         assert young_urban["alert_level"] == "none"
     finally:
-        temp_dir.cleanup()
+        cleanup_temp_db(temp_dir)
 
 
 def test_empty_window_returns_no_data_alerts() -> None:
@@ -386,7 +376,7 @@ def test_empty_window_returns_no_data_alerts() -> None:
         assert all(entry["has_data"] is False for entry in drift)
         assert all(entry["status"] == "no_data" for entry in drift)
     finally:
-        temp_dir.cleanup()
+        cleanup_temp_db(temp_dir)
 
 
 def test_compute_drift_reports_source_mix_metadata() -> None:
@@ -440,7 +430,7 @@ def test_compute_drift_reports_source_mix_metadata() -> None:
         drift = compute_drift("inflace", days_back=7)
         source_mix = drift[0]["source_mix"]
     finally:
-        temp_dir.cleanup()
+        cleanup_temp_db(temp_dir)
 
     assert source_mix["current"]["article_count_by_outlet"] == {"alpha": 3, "beta": 2}
     assert source_mix["reference"]["article_count_by_outlet"] == {"gamma": 1}
@@ -484,7 +474,7 @@ def test_source_normalized_drift_dampens_outlet_mix_skew() -> None:
         young_urban = next(entry for entry in drift if entry["segment"] == "young_urban")
         normalized = young_urban["source_normalized"]
     finally:
-        temp_dir.cleanup()
+        cleanup_temp_db(temp_dir)
 
     assert young_urban["current"]["concern_level"] == 0.82
     assert young_urban["drift_magnitude"] > 0.15
@@ -517,7 +507,7 @@ def test_source_normalized_drift_reports_no_panel_overlap() -> None:
         drift = compute_drift("inflace", days_back=7, country="CZ")
         young_urban = next(entry for entry in drift if entry["segment"] == "young_urban")
     finally:
-        temp_dir.cleanup()
+        cleanup_temp_db(temp_dir)
 
     assert young_urban["source_normalized"]["status"] == "no_panel_overlap"
     assert young_urban["source_normalized"]["current"] is None
@@ -564,7 +554,7 @@ def test_compute_drift_reports_segment_status_levels() -> None:
         assert drift_by_segment["family"]["status"] == "warming"
         assert drift_by_segment["senior"]["status"] == "no_data"
     finally:
-        temp_dir.cleanup()
+        cleanup_temp_db(temp_dir)
 
 
 def main() -> int:

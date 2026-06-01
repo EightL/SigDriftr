@@ -214,6 +214,14 @@ class ClusterMember(BaseModel):
     is_noise: bool
 
 
+class ClusterDedupeStats(BaseModel):
+    raw_article_count: int = 0
+    cluster_input_count: int = 0
+    duplicate_group_count: int = 0
+    duplicates_removed: int = 0
+    groups: list[dict[str, object]] = Field(default_factory=list)
+
+
 class ClusterResponse(BaseModel):
     cluster_id: int
     cluster_label: int
@@ -243,6 +251,7 @@ class ClusterRunMetadata(BaseModel):
     umap_n_neighbors: int
     hdbscan_min_cluster_size: int
     hdbscan_min_samples: int
+    dedupe: ClusterDedupeStats | None = None
 
 
 class ClusterRunResponse(ClusterRunMetadata):

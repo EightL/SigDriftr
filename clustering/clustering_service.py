@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 import numpy as np
 
 from clustering.centroid import compute_centroids
+from clustering.dedupe import ArticleDedupeContext, DedupeResult, dedupe_embeddings
 from clustering.hdbscan_clusterer import cluster_reduced
 from clustering.umap_reducer import reduce_embeddings
 from db.init import get_conn
@@ -150,6 +151,33 @@ def _load_article_context(article_ids: list[str]) -> list[dict[str, object]]:
     return [article_map[article_id] for article_id in article_ids if article_id in article_map]
 
 
+def _load_dedupe_context(article_ids: list[str]) -> dict[str, ArticleDedupeContext]:
+    if not article_ids:
+        return {}
+
+    conn = get_conn()
+    placeholders = ", ".join("?" for _ in article_ids)
+    rows = conn.execute(
+        f"""
+        SELECT id, title, summary, body, canonical_url, COALESCE(published_at, fetched_at)
+        FROM articles
+        WHERE id IN ({placeholders})
+        """,
+        article_ids,
+    ).fetchall()
+    return {
+        str(row[0]): ArticleDedupeContext(
+            article_id=str(row[0]),
+            title=row[1] or "",
+            summary=row[2] or "",
+            body=row[3] or "",
+            canonical_url=row[4] or "",
+            published_at=row[5],
+        )
+        for row in rows
+    }
+
+
 def _select_embeddings(
     *,
     topic: str,
@@ -231,6 +259,41 @@ def _effective_umap_params(
     return n_components, n_neighbors
 
 
+def cluster_rows(
+    rows: list[SelectedEmbedding],
+    *,
+    umap_components: int = DEFAULT_UMAP_COMPONENTS,
+    umap_neighbors: int = DEFAULT_UMAP_NEIGHBORS,
+    min_cluster_size: int = DEFAULT_MIN_CLUSTER_SIZE,
+    min_samples: int = DEFAULT_MIN_SAMPLES,
+    random_state: int = UMAP_RANDOM_STATE,
+) -> tuple[np.ndarray, np.ndarray, dict[int, list[float]], int, int]:
+    if len(rows) < MIN_ARTICLES_FOR_CLUSTERING:
+        raise ValueError(
+            f"At least {MIN_ARTICLES_FOR_CLUSTERING} rows are required for clustering."
+        )
+
+    original_vectors = np.asarray([row.vector for row in rows], dtype=float)
+    n_components, n_neighbors = _effective_umap_params(
+        len(rows),
+        requested_components=umap_components,
+        requested_neighbors=umap_neighbors,
+    )
+    reduced = reduce_embeddings(
+        original_vectors,
+        n_components=n_components,
+        n_neighbors=n_neighbors,
+        random_state=random_state,
+    )
+    labels, probabilities = cluster_reduced(
+        reduced,
+        min_cluster_size=min_cluster_size,
+        min_samples=min_samples,
+    )
+    centroids = compute_centroids(labels, original_vectors)
+    return labels, probabilities, centroids, n_components, n_neighbors
+
+
 def _insert_run(
     *,
     run_id: str,
@@ -280,6 +343,52 @@ def _insert_run(
             min_samples,
             get_model_name(),
             model_version,
+        ),
+    )
+
+
+def _dedupe_groups_payload(result: DedupeResult) -> list[dict[str, object]]:
+    return [
+        {
+            "representative_article_id": group.representative_article_id,
+            "member_article_ids": group.member_article_ids,
+            "reasons": group.reasons,
+        }
+        for group in result.groups
+    ]
+
+
+def _dedupe_payload(result: DedupeResult | None) -> dict[str, object]:
+    if result is None:
+        return {
+            "raw_article_count": 0,
+            "cluster_input_count": 0,
+            "duplicate_group_count": 0,
+            "duplicates_removed": 0,
+            "groups": [],
+        }
+    return {
+        **result.stats,
+        "groups": _dedupe_groups_payload(result),
+    }
+
+
+def _persist_dedupe_stats(run_id: str, result: DedupeResult) -> None:
+    conn = get_conn()
+    conn.execute(
+        """
+        INSERT OR REPLACE INTO cluster_dedupe_stats
+        (run_id, raw_article_count, cluster_input_count, duplicate_group_count,
+         duplicates_removed, duplicate_groups_json)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (
+            run_id,
+            int(result.stats["raw_article_count"]),
+            int(result.stats["cluster_input_count"]),
+            int(result.stats["duplicate_group_count"]),
+            int(result.stats["duplicates_removed"]),
+            json.dumps(_dedupe_groups_payload(result), ensure_ascii=False),
         ),
     )
 
@@ -353,11 +462,14 @@ def run_clustering(
         window_start=window_start,
         window_end=window_end,
     )
+    dedupe_context = _load_dedupe_context([row.article_id for row in rows])
+    dedupe_result = dedupe_embeddings(rows, dedupe_context)
+    deduped_rows = dedupe_result.rows
     run_id = uuid.uuid4().hex
     model_version = _resolve_model_version(rows)
     conn = get_conn()
 
-    if len(rows) < MIN_ARTICLES_FOR_CLUSTERING:
+    if len(deduped_rows) < MIN_ARTICLES_FOR_CLUSTERING:
         conn.execute("BEGIN")
         try:
             _insert_run(
@@ -379,6 +491,7 @@ def run_clustering(
                 min_samples=min_samples,
                 model_version=model_version,
             )
+            _persist_dedupe_stats(run_id, dedupe_result)
             conn.execute("COMMIT")
         except Exception:
             conn.execute("ROLLBACK")
@@ -403,27 +516,17 @@ def run_clustering(
             "umap_n_neighbors": 0,
             "hdbscan_min_cluster_size": min_cluster_size,
             "hdbscan_min_samples": min_samples,
+            "dedupe": _dedupe_payload(dedupe_result),
             "duration_s": round(time.perf_counter() - started_at, 4),
         }
 
-    original_vectors = np.asarray([row.vector for row in rows], dtype=float)
-    n_components, n_neighbors = _effective_umap_params(
-        len(rows),
-        requested_components=umap_components,
-        requested_neighbors=umap_neighbors,
-    )
-    reduced = reduce_embeddings(
-        original_vectors,
-        n_components=n_components,
-        n_neighbors=n_neighbors,
-        random_state=UMAP_RANDOM_STATE,
-    )
-    labels, probabilities = cluster_reduced(
-        reduced,
+    labels, probabilities, centroids, n_components, n_neighbors = cluster_rows(
+        deduped_rows,
+        umap_components=umap_components,
+        umap_neighbors=umap_neighbors,
         min_cluster_size=min_cluster_size,
         min_samples=min_samples,
     )
-    centroids = compute_centroids(labels, original_vectors)
     n_noise = int(np.sum(labels == -1))
     n_clusters = len(centroids)
     status = RUN_STATUS_ALL_NOISE if n_clusters == 0 else RUN_STATUS_COMPLETED
@@ -449,9 +552,10 @@ def run_clustering(
             min_samples=min_samples,
             model_version=model_version,
         )
+        _persist_dedupe_stats(run_id, dedupe_result)
         _persist_clustering_result(
             run_id=run_id,
-            rows=rows,
+            rows=deduped_rows,
             labels=labels,
             probabilities=probabilities,
             centroids=centroids,
@@ -480,6 +584,7 @@ def run_clustering(
         "umap_n_neighbors": n_neighbors,
         "hdbscan_min_cluster_size": min_cluster_size,
         "hdbscan_min_samples": min_samples,
+        "dedupe": _dedupe_payload(dedupe_result),
         "duration_s": round(time.perf_counter() - started_at, 4),
     }
 
@@ -546,6 +651,15 @@ def get_latest_cluster_run(
         return None
 
     run_id = row[0]
+    dedupe_row = conn.execute(
+        """
+        SELECT raw_article_count, cluster_input_count, duplicate_group_count,
+               duplicates_removed, duplicate_groups_json
+        FROM cluster_dedupe_stats
+        WHERE run_id = ?
+        """,
+        (run_id,),
+    ).fetchone()
     cluster_rows = conn.execute(
         """
         SELECT id, cluster_label, size, centroid_vector, centroid_dim
@@ -673,6 +787,17 @@ def get_latest_cluster_run(
         "model_name": row[16],
         "model_version": row[17],
         "created_at": row[18],
+        "dedupe": (
+            {
+                "raw_article_count": int(dedupe_row[0] or 0),
+                "cluster_input_count": int(dedupe_row[1] or 0),
+                "duplicate_group_count": int(dedupe_row[2] or 0),
+                "duplicates_removed": int(dedupe_row[3] or 0),
+                "groups": _safe_json_list(dedupe_row[4]),
+            }
+            if dedupe_row is not None
+            else None
+        ),
         "clusters": clusters,
         "noise_members": noise_members,
     }

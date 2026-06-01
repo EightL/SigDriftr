@@ -1,6 +1,4 @@
 #!/usr/bin/env python3
-import tempfile
-from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -11,35 +9,22 @@ from config.feeds import FEEDS
 
 pytest.importorskip("pydantic")
 
-from brief.generator import clear_brief_cache, generate_brief
+from brief.generator import generate_brief
 from delta.engine import compute_drift
 from delta.mapper import compute_segment_profiles
 from extraction.extractor import run_extraction
+from db_helpers import cleanup_temp_db as cleanup_temp_db_base
+from db_helpers import setup_temp_db as setup_temp_db_base
 from ingestion.bandit import get_bandit_snapshot
 from ingestion.crawler import crawl
 
 
-ORIGINAL_DB_PATH = db.init.DB_PATH
+def setup_temp_db():
+    return setup_temp_db_base(clear_brief_cache=True)
 
 
-def setup_temp_db() -> tempfile.TemporaryDirectory:
-    temp_dir = tempfile.TemporaryDirectory()
-    db.init.DB_PATH = Path(temp_dir.name) / "sigdriftr.db"
-    if hasattr(db.init._local, "conn"):
-        db.init._local.conn.close()
-        delattr(db.init._local, "conn")
-    db.init.get_conn()
-    clear_brief_cache()
-    return temp_dir
-
-
-def cleanup_temp_db(temp_dir: tempfile.TemporaryDirectory) -> None:
-    clear_brief_cache()
-    if hasattr(db.init._local, "conn"):
-        db.init._local.conn.close()
-        delattr(db.init._local, "conn")
-    db.init.DB_PATH = ORIGINAL_DB_PATH
-    temp_dir.cleanup()
+def cleanup_temp_db(temp_dir) -> None:
+    cleanup_temp_db_base(temp_dir, clear_brief_cache=True)
 
 
 def test_end_to_end_pipeline_produces_brief_and_bandit_updates() -> None:

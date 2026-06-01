@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 import asyncio
-import tempfile
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -8,6 +7,7 @@ from unittest.mock import patch
 import db.init
 import pytest
 
+from db_helpers import cleanup_temp_db, setup_temp_db
 from ingestion.bandit import (
     get_bandit_snapshot,
     record_signal_reward,
@@ -18,23 +18,6 @@ from ingestion.bandit import (
     warm_start_from_history,
 )
 from ingestion.crawler import crawl
-
-
-def setup_temp_db() -> tempfile.TemporaryDirectory:
-    temp_dir = tempfile.TemporaryDirectory()
-    db.init.DB_PATH = db.init.Path(temp_dir.name) / "sigdriftr.db"
-    if hasattr(db.init._local, "conn"):
-        db.init._local.conn.close()
-        delattr(db.init._local, "conn")
-    db.init.get_conn()
-    return temp_dir
-
-
-def cleanup_temp_db(temp_dir: tempfile.TemporaryDirectory) -> None:
-    if hasattr(db.init._local, "conn"):
-        db.init._local.conn.close()
-        delattr(db.init._local, "conn")
-    temp_dir.cleanup()
 
 
 def insert_article(

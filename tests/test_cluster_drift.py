@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
 import json
-import tempfile
-from pathlib import Path
 
 import pytest
 
 import db.init
 from config.domains import get_domain_config
+from db_helpers import cleanup_temp_db, setup_temp_db
 from delta.cluster_drift import (
     _assignment_metrics,
     get_cluster_drift,
@@ -14,27 +13,6 @@ from delta.cluster_drift import (
     run_cluster_drift,
 )
 from extraction.embedder import get_model_name
-
-
-ORIGINAL_DB_PATH = db.init.DB_PATH
-
-
-def setup_temp_db() -> tempfile.TemporaryDirectory:
-    temp_dir = tempfile.TemporaryDirectory()
-    db.init.DB_PATH = Path(temp_dir.name) / "sigdriftr.db"
-    if hasattr(db.init._local, "conn"):
-        db.init._local.conn.close()
-        delattr(db.init._local, "conn")
-    db.init.get_conn()
-    return temp_dir
-
-
-def cleanup_temp_db(temp_dir: tempfile.TemporaryDirectory) -> None:
-    if hasattr(db.init._local, "conn"):
-        db.init._local.conn.close()
-        delattr(db.init._local, "conn")
-    db.init.DB_PATH = ORIGINAL_DB_PATH
-    temp_dir.cleanup()
 
 
 def make_vector(*leading: float) -> list[float]:

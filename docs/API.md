@@ -467,6 +467,39 @@ lookups accept any configured alias and return the stored run topic plus the
 canonical id. This means a run created for `energie` is discoverable through
 `energy`, and cluster tracks are shared across aliases.
 
+Before UMAP/HDBSCAN, the cluster stage collapses conservative near-duplicates
+within the selected window. Exact canonical URL and exact normalized-title
+matches are removed, and high embedding similarity must be corroborated by
+article text overlap. Cluster run responses include optional `dedupe` stats:
+
+```json
+{
+  "raw_article_count": 132,
+  "cluster_input_count": 110,
+  "duplicate_group_count": 18,
+  "duplicates_removed": 22,
+  "groups": [
+    {
+      "representative_article_id": "abc123",
+      "member_article_ids": ["abc123", "def456"],
+      "reasons": ["semantic_lexical"]
+    }
+  ]
+}
+```
+
+For offline validation, run bootstrap cluster stability reporting:
+
+```bash
+python scripts/evaluate_cluster_stability.py \
+  --topic energie \
+  --window-hours 168 \
+  --bootstrap-samples 25
+```
+
+The report is written to `eval/reports/cluster_stability_<topic>.json` unless
+`--output` is provided.
+
 ---
 
 ### 9. GET /health - System Health Check

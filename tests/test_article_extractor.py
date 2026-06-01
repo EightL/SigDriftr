@@ -1,31 +1,14 @@
 from __future__ import annotations
 
 import json
-import tempfile
 from datetime import datetime, timezone
 from unittest.mock import patch
 
 import db.init
+from db_helpers import cleanup_temp_db, setup_temp_db
 
 
 RECENT_TS = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
-
-
-def setup_temp_db() -> tempfile.TemporaryDirectory:
-    temp_dir = tempfile.TemporaryDirectory()
-    db.init.DB_PATH = db.init.Path(temp_dir.name) / "sigdriftr.db"
-    if hasattr(db.init._local, "conn"):
-        db.init._local.conn.close()
-        delattr(db.init._local, "conn")
-    db.init.get_conn()
-    return temp_dir
-
-
-def cleanup_temp_db(temp_dir: tempfile.TemporaryDirectory) -> None:
-    if hasattr(db.init._local, "conn"):
-        db.init._local.conn.close()
-        delattr(db.init._local, "conn")
-    temp_dir.cleanup()
 
 
 def insert_article(article_id: str, topic: str, body: str = "") -> None:

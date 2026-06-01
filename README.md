@@ -59,6 +59,14 @@ python scripts/evaluate_weak_gold.py \
   --predictions eval/model_outputs/czenec_batch_200_chatgpt.json
 ```
 
+Cluster stability can be checked after articles have embeddings:
+
+```bash
+python scripts/evaluate_cluster_stability.py \
+  --topic energie \
+  --window-hours 168
+```
+
 ## Docker
 
 ```bash

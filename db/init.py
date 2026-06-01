@@ -494,6 +494,22 @@ def _ensure_cluster_schema(conn: sqlite3.Connection) -> None:
     )
 
 
+def _ensure_cluster_dedupe_schema(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS cluster_dedupe_stats (
+            run_id                 TEXT PRIMARY KEY REFERENCES cluster_runs(run_id),
+            raw_article_count      INTEGER NOT NULL DEFAULT 0,
+            cluster_input_count    INTEGER NOT NULL DEFAULT 0,
+            duplicate_group_count  INTEGER NOT NULL DEFAULT 0,
+            duplicates_removed     INTEGER NOT NULL DEFAULT 0,
+            duplicate_groups_json  TEXT    NOT NULL DEFAULT '[]',
+            created_at             TEXT    NOT NULL DEFAULT (datetime('now'))
+        )
+        """
+    )
+
+
 def _ensure_cluster_signal_schema(conn: sqlite3.Connection) -> None:
     conn.execute(
         """
@@ -714,8 +730,184 @@ def _ensure_cluster_drift_schema(conn: sqlite3.Connection) -> None:
     )
 
 
+def _ensure_core_schema(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS articles (
+            id           TEXT PRIMARY KEY,
+            outlet       TEXT NOT NULL,
+            title        TEXT NOT NULL,
+            summary      TEXT,
+            body         TEXT,
+            url          TEXT UNIQUE NOT NULL,
+            canonical_url TEXT,
+            topic        TEXT,
+            canonical_topic_id TEXT,
+            country      TEXT NOT NULL DEFAULT 'CZ',
+            language     TEXT NOT NULL DEFAULT 'cs',
+            published_at TEXT,
+            fetched_at   TEXT NOT NULL
+        );
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS signals (
+            article_id         TEXT PRIMARY KEY,
+            concern_level      REAL,
+            purchase_intent    REAL,
+            avoidance_signals  REAL,
+            dominant_frame     TEXT,
+            seg_young_urban    REAL,
+            seg_family         REAL,
+            seg_senior         REAL,
+            seg_b2b            REAL,
+            seg_young_urban_relevance REAL,
+            seg_family_relevance      REAL,
+            seg_senior_relevance      REAL,
+            seg_b2b_relevance         REAL,
+            raw_json           TEXT,
+            extracted_at       TEXT NOT NULL,
+            FOREIGN KEY (article_id) REFERENCES articles(id)
+        );
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS article_entities (
+            article_id   TEXT NOT NULL,
+            entity_text  TEXT NOT NULL,
+            entity_norm  TEXT NOT NULL,
+            entity_label TEXT NOT NULL,
+            PRIMARY KEY (article_id, entity_norm, entity_label),
+            FOREIGN KEY (article_id) REFERENCES articles(id)
+        );
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_article_entities_norm
+        ON article_entities(entity_norm, entity_label)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_article_entities_article
+        ON article_entities(article_id)
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS segment_profiles (
+            id                TEXT PRIMARY KEY,
+            topic             TEXT NOT NULL,
+            canonical_topic_id TEXT,
+            segment           TEXT NOT NULL,
+            window_start      TEXT NOT NULL,
+            window_days       INTEGER NOT NULL,
+            concern_level     REAL,
+            purchase_intent   REAL,
+            avoidance_signals REAL,
+            dominant_frame    TEXT,
+            article_count     INTEGER,
+            computed_at       TEXT NOT NULL
+        );
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_segment_profiles_topic_segment_computed_at
+        ON segment_profiles(topic, segment, computed_at)
+        """
+    )
+    if "canonical_topic_id" in _table_columns(conn, "segment_profiles"):
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_segment_profiles_canonical_segment_computed_at
+            ON segment_profiles(canonical_topic_id, segment, computed_at)
+            """
+        )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS baselines (
+            id                TEXT PRIMARY KEY,
+            topic             TEXT NOT NULL,
+            canonical_topic_id TEXT,
+            segment           TEXT NOT NULL,
+            concern_level     REAL,
+            purchase_intent   REAL,
+            avoidance_signals REAL,
+            dominant_frame    TEXT,
+            seeded            INTEGER DEFAULT 0,
+            sample_count      INTEGER NOT NULL DEFAULT 0,
+            is_learned        INTEGER NOT NULL DEFAULT 0,
+            updated_at        TEXT NOT NULL
+        );
+        """
+    )
+    if "canonical_topic_id" in _table_columns(conn, "baselines"):
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_baselines_canonical_segment
+            ON baselines(canonical_topic_id, segment)
+            """
+        )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS bandit_state (
+            outlet       TEXT PRIMARY KEY,
+            context_dim  INTEGER NOT NULL,
+            a_json       TEXT NOT NULL,
+            b_json       TEXT NOT NULL,
+            pulls        INTEGER NOT NULL DEFAULT 0,
+            total_reward REAL NOT NULL DEFAULT 0.0,
+            updated_at   TEXT NOT NULL
+        );
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS article_embeddings (
+            id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+            article_id          TEXT    NOT NULL REFERENCES articles(id),
+            model_name          TEXT    NOT NULL DEFAULT 'sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2',
+            model_version       TEXT,
+            embedding_dim       INTEGER NOT NULL DEFAULT 384,
+            embedding_vector    TEXT    NOT NULL,
+            embedding_text      TEXT    NOT NULL,
+            embedding_text_hash TEXT    NOT NULL,
+            language            TEXT,
+            status              TEXT    NOT NULL DEFAULT 'pending',
+            error_message       TEXT,
+            embedded_at         TEXT,
+            created_at          TEXT    NOT NULL DEFAULT (datetime('now')),
+            updated_at          TEXT    NOT NULL DEFAULT (datetime('now')),
+            UNIQUE (article_id, model_name, embedding_text_hash)
+        );
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_ae_article_model_updated
+        ON article_embeddings(article_id, model_name, updated_at)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_ae_model_status_updated
+        ON article_embeddings(model_name, status, updated_at)
+        """
+    )
+    _ensure_collection_schema(conn)
+    _ensure_cluster_schema(conn)
+    _ensure_cluster_dedupe_schema(conn)
+    _ensure_cluster_signal_schema(conn)
+    _ensure_cluster_drift_schema(conn)
+
+
 def run_migrations(conn: sqlite3.Connection) -> None:
     """Apply idempotent schema migrations for existing databases."""
+    _ensure_core_schema(conn)
     table_names = {
         row[0]
         for row in conn.execute(
@@ -934,46 +1126,6 @@ def run_migrations(conn: sqlite3.Connection) -> None:
             WHERE topic IS NOT NULL AND TRIM(topic) != ''
             """
         )
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS article_embeddings (
-                id                  INTEGER PRIMARY KEY AUTOINCREMENT,
-                article_id          TEXT    NOT NULL REFERENCES articles(id),
-                model_name          TEXT    NOT NULL DEFAULT 'sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2',
-                model_version       TEXT,
-                embedding_dim       INTEGER NOT NULL DEFAULT 384,
-                embedding_vector    TEXT    NOT NULL,
-                embedding_text      TEXT    NOT NULL,
-                embedding_text_hash TEXT    NOT NULL,
-                language            TEXT,
-                status              TEXT    NOT NULL DEFAULT 'pending',
-                error_message       TEXT,
-                embedded_at         TEXT,
-                created_at          TEXT    NOT NULL DEFAULT (datetime('now')),
-                updated_at          TEXT    NOT NULL DEFAULT (datetime('now')),
-                UNIQUE (article_id, model_name, embedding_text_hash)
-            )
-            """
-        )
-        conn.execute(
-            """
-            CREATE INDEX IF NOT EXISTS idx_ae_article_model_updated
-            ON article_embeddings(article_id, model_name, updated_at)
-            """
-        )
-        conn.execute(
-            """
-            CREATE INDEX IF NOT EXISTS idx_ae_model_status_updated
-            ON article_embeddings(model_name, status, updated_at)
-            """
-        )
-        _ensure_cluster_schema(conn)
-        _ensure_cluster_signal_schema(conn)
-        _ensure_cluster_drift_schema(conn)
-    elif "cluster_signals" not in table_names:
-        _ensure_cluster_signal_schema(conn)
-    elif "cluster_drift_runs" not in table_names:
-        _ensure_cluster_drift_schema(conn)
 
     for table_name in [
         "collection_runs",
@@ -1075,177 +1227,6 @@ def get_conn() -> sqlite3.Connection:
         )
         conn.execute("PRAGMA busy_timeout=30000")
         conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS articles (
-                id           TEXT PRIMARY KEY,
-                outlet       TEXT NOT NULL,
-                title        TEXT NOT NULL,
-                summary      TEXT,
-                body         TEXT,
-                url          TEXT UNIQUE NOT NULL,
-                canonical_url TEXT,
-                topic        TEXT,
-                canonical_topic_id TEXT,
-                country      TEXT NOT NULL DEFAULT 'CZ',
-                language     TEXT NOT NULL DEFAULT 'cs',
-                published_at TEXT,
-                fetched_at   TEXT NOT NULL
-            );
-            """
-        )
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS signals (
-                article_id         TEXT PRIMARY KEY,
-                concern_level      REAL,
-                purchase_intent    REAL,
-                avoidance_signals  REAL,
-                dominant_frame     TEXT,
-                seg_young_urban    REAL,
-                seg_family         REAL,
-                seg_senior         REAL,
-                seg_b2b            REAL,
-                seg_young_urban_relevance REAL,
-                seg_family_relevance      REAL,
-                seg_senior_relevance      REAL,
-                seg_b2b_relevance         REAL,
-                raw_json           TEXT,
-                extracted_at       TEXT NOT NULL,
-                FOREIGN KEY (article_id) REFERENCES articles(id)
-            );
-            """
-        )
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS article_entities (
-                article_id   TEXT NOT NULL,
-                entity_text  TEXT NOT NULL,
-                entity_norm  TEXT NOT NULL,
-                entity_label TEXT NOT NULL,
-                PRIMARY KEY (article_id, entity_norm, entity_label),
-                FOREIGN KEY (article_id) REFERENCES articles(id)
-            );
-            """
-        )
-        conn.execute(
-            """
-            CREATE INDEX IF NOT EXISTS idx_article_entities_norm
-            ON article_entities(entity_norm, entity_label)
-            """
-        )
-        conn.execute(
-            """
-            CREATE INDEX IF NOT EXISTS idx_article_entities_article
-            ON article_entities(article_id)
-            """
-        )
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS segment_profiles (
-                id                TEXT PRIMARY KEY,
-                topic             TEXT NOT NULL,
-                canonical_topic_id TEXT,
-                segment           TEXT NOT NULL,
-                window_start      TEXT NOT NULL,
-                window_days       INTEGER NOT NULL,
-                concern_level     REAL,
-                purchase_intent   REAL,
-                avoidance_signals REAL,
-                dominant_frame    TEXT,
-                article_count     INTEGER,
-                computed_at       TEXT NOT NULL
-            );
-            """
-        )
-        conn.execute(
-            """
-            CREATE INDEX IF NOT EXISTS idx_segment_profiles_topic_segment_computed_at
-            ON segment_profiles(topic, segment, computed_at)
-            """
-        )
-        if "canonical_topic_id" in _table_columns(conn, "segment_profiles"):
-            conn.execute(
-                """
-                CREATE INDEX IF NOT EXISTS idx_segment_profiles_canonical_segment_computed_at
-                ON segment_profiles(canonical_topic_id, segment, computed_at)
-                """
-            )
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS baselines (
-                id                TEXT PRIMARY KEY,
-                topic             TEXT NOT NULL,
-                canonical_topic_id TEXT,
-                segment           TEXT NOT NULL,
-                concern_level     REAL,
-                purchase_intent   REAL,
-                avoidance_signals REAL,
-                dominant_frame    TEXT,
-                seeded            INTEGER DEFAULT 0,
-                sample_count      INTEGER NOT NULL DEFAULT 0,
-                is_learned        INTEGER NOT NULL DEFAULT 0,
-                updated_at        TEXT NOT NULL
-            );
-            """
-        )
-        if "canonical_topic_id" in _table_columns(conn, "baselines"):
-            conn.execute(
-                """
-                CREATE INDEX IF NOT EXISTS idx_baselines_canonical_segment
-                ON baselines(canonical_topic_id, segment)
-                """
-            )
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS bandit_state (
-                outlet       TEXT PRIMARY KEY,
-                context_dim  INTEGER NOT NULL,
-                a_json       TEXT NOT NULL,
-                b_json       TEXT NOT NULL,
-                pulls        INTEGER NOT NULL DEFAULT 0,
-                total_reward REAL NOT NULL DEFAULT 0.0,
-                updated_at   TEXT NOT NULL
-            );
-            """
-        )
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS article_embeddings (
-                id                  INTEGER PRIMARY KEY AUTOINCREMENT,
-                article_id          TEXT    NOT NULL REFERENCES articles(id),
-                model_name          TEXT    NOT NULL DEFAULT 'sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2',
-                model_version       TEXT,
-                embedding_dim       INTEGER NOT NULL DEFAULT 384,
-                embedding_vector    TEXT    NOT NULL,
-                embedding_text      TEXT    NOT NULL,
-                embedding_text_hash TEXT    NOT NULL,
-                language            TEXT,
-                status              TEXT    NOT NULL DEFAULT 'pending',
-                error_message       TEXT,
-                embedded_at         TEXT,
-                created_at          TEXT    NOT NULL DEFAULT (datetime('now')),
-                updated_at          TEXT    NOT NULL DEFAULT (datetime('now')),
-                UNIQUE (article_id, model_name, embedding_text_hash)
-            );
-            """
-        )
-        conn.execute(
-            """
-            CREATE INDEX IF NOT EXISTS idx_ae_article_model_updated
-            ON article_embeddings(article_id, model_name, updated_at)
-            """
-        )
-        conn.execute(
-            """
-            CREATE INDEX IF NOT EXISTS idx_ae_model_status_updated
-            ON article_embeddings(model_name, status, updated_at)
-            """
-        )
-        _ensure_cluster_schema(conn)
-        _ensure_cluster_signal_schema(conn)
-        _ensure_cluster_drift_schema(conn)
-        _ensure_collection_schema(conn)
         run_migrations(conn)
         conn.commit()
         _local.conn = conn

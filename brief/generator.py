@@ -2,18 +2,45 @@ import json
 import logging
 import math
 import re
-import threading
-import urllib.request
-from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Literal
 
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import ValidationError
 
+from brief.artifacts import (
+    AnalystArtifact,
+    BriefArtifacts,
+    BriefBundle,
+    BriefSourceResolution,
+    ExplainerArtifact,
+    _copy_brief,
+    _model_dump,
+    _model_validate,
+)
+from brief.cache import (
+    BRIEF_CACHE_TTL,
+    CacheKey,
+    _brief_cache,
+    _brief_support_cache,
+    _cache_key,
+    _cache_lock,
+    _cache_mode_for_brief,
+    _cache_mode_keys,
+    _get_cached_brief_for_resolution,
+    _get_cached_brief_support_for_resolution,
+    _store_cached_brief,
+    _store_cached_brief_support,
+    clear_brief_cache,
+)
+from brief.llm import (
+    OLLAMA_MODEL,
+    OLLAMA_TIMEOUT_SECONDS,
+    OLLAMA_URL,
+    call_ollama_json as _call_ollama_json,
+)
 from brief.models import (
     BriefCalibrationWeights,
     BriefConfidenceContext,
-    BriefSourceScope,
     ClusterPriorityWeight,
     ResearchBrief,
 )
@@ -32,20 +59,16 @@ from db.topic_queries import topic_filter_sql
 from db.topic_resolver import resolve_topic
 from delta.cluster_drift import get_cluster_drift, get_latest_cluster_drift
 from delta.engine import compute_drift
+from brief.source_resolution import (
+    _normalize_country,
+    _normalize_language,
+    _normalize_source,
+    _source_scope,
+)
 
 
-OLLAMA_URL = "http://localhost:11434/api/generate"
-OLLAMA_MODEL = "qwen2.5:7b-instruct"
-OLLAMA_TIMEOUT_SECONDS = 60
-BRIEF_CACHE_TTL = timedelta(minutes=30)
 logger = logging.getLogger(__name__)
 
-CacheKey = tuple[str, str, str, str | None, str, str | None]
-
-# This cache is intentionally process-local for the single-worker demo setup.
-_brief_cache: dict[CacheKey, tuple[ResearchBrief, datetime]] = {}
-_brief_support_cache: dict[CacheKey, tuple[dict[str, object], datetime]] = {}
-_cache_lock = threading.Lock()
 _SEGMENT_ALIASES = {
     "young_urban": "young_urban",
     "young_urban_adults": "young_urban",
@@ -91,235 +114,6 @@ _ALERT_LEVEL_RANK = {
     "mild": 1,
     "strong": 2,
 }
-
-
-class AnalystArtifact(BaseModel):
-    facts: list[str] = Field(default_factory=list, min_length=1)
-    numeric_changes: list[str] = Field(default_factory=list)
-    cited_clusters: list[str] = Field(default_factory=list)
-    cited_articles: list[str] = Field(default_factory=list)
-    evidence_gaps: list[str] = Field(default_factory=list)
-
-
-class ExplainerArtifact(BaseModel):
-    what_changed: str
-    for_whom: str
-    uncertainty_and_caveats: list[str] = Field(default_factory=list)
-
-
-@dataclass(frozen=True)
-class BriefSourceResolution:
-    display_topic: str
-    real_topic: str
-    canonical_topic_id: str
-    canonical_display_name: str
-    country: str
-    source: str
-    language: str | None
-    source_mode: Literal["cluster_drift", "legacy_drift"]
-    generation_mode: Literal["hierarchical_cluster", "hierarchical_legacy"]
-    run_id: str | None = None
-    cluster_snapshot: dict[str, object] | None = None
-
-
-@dataclass(frozen=True)
-class BriefBundle:
-    resolution: BriefSourceResolution
-    generated_at: str
-    status: str
-    segment_rollups: list[dict[str, object]]
-    selected_observations: list[dict[str, object]]
-    confidence_context: BriefConfidenceContext
-    calibration_weights: BriefCalibrationWeights
-
-
-@dataclass(frozen=True)
-class BriefArtifacts:
-    brief: ResearchBrief
-    support: dict[str, object]
-
-
-def _copy_brief(brief: ResearchBrief, **updates: object) -> ResearchBrief:
-    if hasattr(brief, "model_copy"):
-        return brief.model_copy(update=updates)
-    return brief.copy(update=updates)
-
-
-def _model_validate(model_cls, data: dict):
-    if hasattr(model_cls, "model_validate"):
-        return model_cls.model_validate(data)
-    return model_cls.parse_obj(data)
-
-
-def _model_dump(model: BaseModel) -> dict[str, object]:
-    if hasattr(model, "model_dump"):
-        return model.model_dump(exclude_none=True)
-    return model.dict(exclude_none=True)
-
-
-def _call_ollama_json(prompt: str) -> dict:
-    """Call local Ollama in JSON mode and return the parsed response object."""
-    payload = json.dumps(
-        {
-            "model": OLLAMA_MODEL,
-            "prompt": prompt,
-            "stream": False,
-            "format": "json",
-            "options": {"temperature": 0.3, "num_predict": 1024},
-        }
-    ).encode("utf-8")
-    request = urllib.request.Request(
-        OLLAMA_URL,
-        data=payload,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    with urllib.request.urlopen(request, timeout=OLLAMA_TIMEOUT_SECONDS) as response:
-        raw = json.loads(response.read().decode("utf-8")).get("response", "").strip()
-
-    if not raw:
-        raise RuntimeError(f"Empty response from Ollama model {OLLAMA_MODEL}.")
-
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError as exc:
-        logger.warning("[brief] Ollama JSON decode failed. raw=%s", raw[:1000])
-        raise RuntimeError("Ollama returned invalid JSON in JSON mode.") from exc
-
-
-def _normalize_country(country: str | None) -> str:
-    return (country or "").strip().upper()
-
-
-def _normalize_source(source: str | None) -> str:
-    return (source or "").strip().lower()
-
-
-def _normalize_language(language: str | None) -> str | None:
-    normalized = (language or "").strip().lower()
-    return normalized or None
-
-
-def _source_scope(resolution: BriefSourceResolution) -> BriefSourceScope:
-    return BriefSourceScope(
-        country=resolution.country,
-        source=resolution.source,
-        language=resolution.language,
-    )
-
-
-def _cache_key(
-    topic: str,
-    country: str,
-    source: str,
-    language: str | None,
-    mode_key: str,
-    run_id: str | None = None,
-) -> CacheKey:
-    return (topic, country, source, language, mode_key, run_id)
-
-
-def _cache_mode_keys(source_mode: str) -> list[str]:
-    if source_mode == "cluster_drift":
-        return ["hierarchical_cluster", "cluster_drift"]
-    return ["hierarchical_legacy", "legacy_drift"]
-
-
-def _cache_mode_for_brief(
-    brief: ResearchBrief,
-    *,
-    source_mode: str,
-) -> str:
-    if brief.generation_mode == "fallback" or brief.generation_mode is None:
-        return source_mode
-    return brief.generation_mode
-
-
-def _get_cached_brief_for_resolution(
-    resolution: BriefSourceResolution,
-    *,
-    run_id: str | None = None,
-) -> ResearchBrief | None:
-    now = datetime.now(timezone.utc)
-    with _cache_lock:
-        for mode_key in _cache_mode_keys(resolution.source_mode):
-            cached = _brief_cache.get(
-                _cache_key(
-                    resolution.display_topic,
-                    resolution.country,
-                    resolution.source,
-                    resolution.language,
-                    mode_key,
-                    run_id,
-                )
-            )
-            if cached and now - cached[1] < BRIEF_CACHE_TTL:
-                return cached[0]
-    return None
-
-
-def _get_cached_brief_support_for_resolution(
-    resolution: BriefSourceResolution,
-    *,
-    run_id: str | None = None,
-) -> dict[str, object] | None:
-    now = datetime.now(timezone.utc)
-    with _cache_lock:
-        for mode_key in _cache_mode_keys(resolution.source_mode):
-            cached = _brief_support_cache.get(
-                _cache_key(
-                    resolution.display_topic,
-                    resolution.country,
-                    resolution.source,
-                    resolution.language,
-                    mode_key,
-                    run_id,
-                )
-            )
-            if cached and now - cached[1] < BRIEF_CACHE_TTL:
-                return dict(cached[0])
-    return None
-
-
-def _store_cached_brief(
-    brief: ResearchBrief,
-    resolution: BriefSourceResolution,
-    *,
-    run_id: str | None = None,
-) -> None:
-    mode_key = _cache_mode_for_brief(brief, source_mode=resolution.source_mode)
-    with _cache_lock:
-        _brief_cache[
-            _cache_key(
-                resolution.display_topic,
-                resolution.country,
-                resolution.source,
-                resolution.language,
-                mode_key,
-                run_id,
-            )
-        ] = (brief, datetime.now(timezone.utc))
-
-
-def _store_cached_brief_support(
-    support: dict[str, object],
-    brief: ResearchBrief,
-    resolution: BriefSourceResolution,
-    *,
-    run_id: str | None = None,
-) -> None:
-    mode_key = _cache_mode_for_brief(brief, source_mode=resolution.source_mode)
-    with _cache_lock:
-        _brief_support_cache[
-            _cache_key(
-                resolution.display_topic,
-                resolution.country,
-                resolution.source,
-                resolution.language,
-                mode_key,
-                run_id,
-            )
-        ] = (dict(support), datetime.now(timezone.utc))
 
 
 def _safe_json_list(raw: str | None) -> list[object]:
@@ -1467,12 +1261,6 @@ def _generate_hierarchical_brief_artifacts(bundle: BriefBundle) -> BriefArtifact
                 fallback_note="Writer stage failed; citations unavailable in fallback brief.",
             ),
         )
-
-
-def clear_brief_cache() -> None:
-    with _cache_lock:
-        _brief_cache.clear()
-        _brief_support_cache.clear()
 
 
 def generate_brief(

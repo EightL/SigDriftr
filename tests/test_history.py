@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
-import tempfile
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 
 import db.init
 import pytest
@@ -9,31 +7,11 @@ import pytest
 pytest.importorskip("fastapi")
 TestClient = pytest.importorskip("fastapi.testclient").TestClient
 
+from db_helpers import cleanup_temp_db, setup_temp_db
 from db.queries import get_profile_history
 from delta.mapper import SEGMENTS
 from delta.seeder import seed_baselines
 from main import app
-
-
-ORIGINAL_DB_PATH = db.init.DB_PATH
-
-
-def setup_temp_db() -> tempfile.TemporaryDirectory:
-    temp_dir = tempfile.TemporaryDirectory()
-    db.init.DB_PATH = Path(temp_dir.name) / "sigdriftr.db"
-    if hasattr(db.init._local, "conn"):
-        db.init._local.conn.close()
-        delattr(db.init._local, "conn")
-    db.init.get_conn()
-    return temp_dir
-
-
-def cleanup_temp_db(temp_dir: tempfile.TemporaryDirectory) -> None:
-    if hasattr(db.init._local, "conn"):
-        db.init._local.conn.close()
-        delattr(db.init._local, "conn")
-    db.init.DB_PATH = ORIGINAL_DB_PATH
-    temp_dir.cleanup()
 
 
 def insert_segment_profile(
@@ -123,4 +101,3 @@ def test_history_route_returns_four_segment_objects() -> None:
     for entry in payload:
         assert entry["dates"] == [first_day, second_day]
         assert len(entry["drift_magnitude"]) == 2
-

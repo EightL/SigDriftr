@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 import asyncio
 import json
-import tempfile
 import types
-from pathlib import Path
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, Mock, patch
 
 import db.init
-from brief.generator import OLLAMA_MODEL, clear_brief_cache, generate_brief
+from brief.generator import OLLAMA_MODEL, generate_brief
 from brief.models import ResearchBrief
+from db_helpers import cleanup_temp_db as cleanup_temp_db_base
+from db_helpers import setup_temp_db as setup_temp_db_base
 from delta.mapper import compute_segment_profiles
 from delta.seeder import seed_baselines
 
@@ -17,28 +17,15 @@ from api import pipeline as pipeline_helpers
 from api import scheduler as pipeline_scheduler
 
 
-ORIGINAL_DB_PATH = db.init.DB_PATH
 RECENT_TS = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
-def setup_temp_db() -> tempfile.TemporaryDirectory:
-    temp_dir = tempfile.TemporaryDirectory()
-    db.init.DB_PATH = Path(temp_dir.name) / "sigdriftr.db"
-    if hasattr(db.init._local, "conn"):
-        db.init._local.conn.close()
-        delattr(db.init._local, "conn")
-    db.init.get_conn()
-    clear_brief_cache()
-    return temp_dir
+def setup_temp_db():
+    return setup_temp_db_base(clear_brief_cache=True)
 
 
-def cleanup_temp_db(temp_dir: tempfile.TemporaryDirectory) -> None:
-    clear_brief_cache()
-    if hasattr(db.init._local, "conn"):
-        db.init._local.conn.close()
-        delattr(db.init._local, "conn")
-    db.init.DB_PATH = ORIGINAL_DB_PATH
-    temp_dir.cleanup()
+def cleanup_temp_db(temp_dir) -> None:
+    cleanup_temp_db_base(temp_dir, clear_brief_cache=True)
 
 
 def insert_article_with_signal(

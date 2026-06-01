@@ -6,7 +6,6 @@ import threading
 import time
 
 from api.common import (
-    model_dump,
     normalize_country,
     normalize_language,
     normalize_source,
@@ -311,133 +310,133 @@ def run_collection_cycle_sync(
     )
 
 
-async def run_full_pipeline(
+def _run_embedding_stage(
     topic: str,
     *,
-    country: str = "",
-    source: str = "",
-    language: str | None = None,
-    window_hours: int = 24,
-    min_cluster_size: int = 3,
-    collection_mode: str | None = None,
-    reward_mode: str | None = None,
-) -> dict[str, object]:
-    from clustering.clustering_service import run_clustering
-    from delta.cluster_drift import run_cluster_drift
-    from extraction.cluster_extractor import run_cluster_extraction
+    country: str,
+    source: str,
+) -> tuple[dict[str, object], float]:
     from extraction.embedding_service import embed_pending_articles
 
-    started_at = time.perf_counter()
-    normalized_country = normalize_country(country)
-    normalized_source = normalize_source(source)
-    normalized_language = normalize_language(language)
-    topic_resolution = resolve_topic(topic) if topic.strip() else None
-
-    collect_started = time.perf_counter()
-    collect_result = await run_collection_cycle(
-        topic,
-        country=normalized_country,
-        source=normalized_source,
-        collection_mode=collection_mode,
-        reward_mode=reward_mode,
-    )
-    collect_duration = round(time.perf_counter() - collect_started, 4)
-
-    embed_started = time.perf_counter()
-    embed_result = embed_pending_articles(
+    started = time.perf_counter()
+    result = embed_pending_articles(
         limit=5000,
         topic=topic,
-        country=normalized_country,
-        source=normalized_source,
+        country=country,
+        source=source,
     )
-    embed_duration = round(time.perf_counter() - embed_started, 4)
+    return result, round(time.perf_counter() - started, 4)
 
-    cluster_started = time.perf_counter()
-    cluster_error_detail: str | None = None
+
+def _cluster_fallback_result(
+    *,
+    topic: str,
+    country: str,
+    source: str,
+    language: str | None,
+    status: str,
+    min_cluster_size: int,
+    n_articles: int = 0,
+) -> dict[str, object]:
+    return {
+        "run_id": None,
+        "topic": topic,
+        "country": country,
+        "source": source,
+        "language": language,
+        "window_start": None,
+        "window_end": None,
+        "status": status,
+        "n_articles": n_articles,
+        "n_clusters": 0,
+        "n_noise": 0,
+        "model_name": None,
+        "model_version": None,
+        "umap_n_components": 0,
+        "umap_n_neighbors": 0,
+        "hdbscan_min_cluster_size": min_cluster_size,
+        "hdbscan_min_samples": 0,
+        "duration_s": 0.0,
+    }
+
+
+def _run_cluster_stage(
+    topic: str,
+    *,
+    country: str,
+    source: str,
+    language: str | None,
+    window_hours: int,
+    min_cluster_size: int,
+) -> tuple[dict[str, object], float, str | None]:
+    from clustering.clustering_service import run_clustering
+
+    started = time.perf_counter()
+    error_detail: str | None = None
     try:
-        cluster_result = run_clustering(
+        result = run_clustering(
             topic=topic,
-            country=normalized_country,
-            source=normalized_source,
-            language=normalized_language,
+            country=country,
+            source=source,
+            language=language,
             window_hours=window_hours,
             min_cluster_size=min_cluster_size,
         )
     except ModuleNotFoundError as exc:
-        cluster_error_detail = (
+        error_detail = (
             f"Clustering dependencies are unavailable in this environment ({exc.name}). "
             "Install stage-3 dependencies and rerun to enable storyline grouping."
         )
-        cluster_result = {
-            "run_id": None,
-            "topic": topic,
-            "country": normalized_country,
-            "source": normalized_source,
-            "language": normalized_language,
-            "window_start": None,
-            "window_end": None,
-            "status": "dependency_missing",
-            "n_articles": counts["article_count"] if "counts" in locals() else 0,
-            "n_clusters": 0,
-            "n_noise": 0,
-            "model_name": None,
-            "model_version": None,
-            "umap_n_components": 0,
-            "umap_n_neighbors": 0,
-            "hdbscan_min_cluster_size": min_cluster_size,
-            "hdbscan_min_samples": 0,
-            "duration_s": 0.0,
-        }
+        result = _cluster_fallback_result(
+            topic=topic,
+            country=country,
+            source=source,
+            language=language,
+            status="dependency_missing",
+            min_cluster_size=min_cluster_size,
+        )
     except Exception as exc:
-        cluster_error_detail = f"Clustering failed: {exc}"
-        cluster_result = {
-            "run_id": None,
-            "topic": topic,
-            "country": normalized_country,
-            "source": normalized_source,
-            "language": normalized_language,
-            "window_start": None,
-            "window_end": None,
-            "status": "failed",
-            "n_articles": 0,
-            "n_clusters": 0,
-            "n_noise": 0,
-            "model_name": None,
-            "model_version": None,
-            "umap_n_components": 0,
-            "umap_n_neighbors": 0,
-            "hdbscan_min_cluster_size": min_cluster_size,
-            "hdbscan_min_samples": 0,
-            "duration_s": 0.0,
-        }
-    cluster_duration = round(time.perf_counter() - cluster_started, 4)
+        error_detail = f"Clustering failed: {exc}"
+        result = _cluster_fallback_result(
+            topic=topic,
+            country=country,
+            source=source,
+            language=language,
+            status="failed",
+            min_cluster_size=min_cluster_size,
+        )
+    return result, round(time.perf_counter() - started, 4), error_detail
 
-    cluster_signal_result: dict[str, object] | None = None
-    cluster_drift_result: dict[str, object] | None = None
-    cluster_signal_error_detail: str | None = None
-    cluster_drift_error_detail: str | None = None
 
-    if (
+def _cluster_produced_groups(cluster_result: dict[str, object]) -> bool:
+    return (
         str(cluster_result.get("status", "")) == "completed"
         and int(cluster_result.get("n_clusters", 0) or 0) > 0
-    ):
-        signal_started = time.perf_counter()
-        try:
-            cluster_signal_result = run_cluster_extraction(
-                run_id=str(cluster_result["run_id"]),
-                overwrite=False,
-                min_cluster_size=min_cluster_size,
-            )
-            cluster_signal_result["duration_s"] = round(
-                time.perf_counter() - signal_started,
-                4,
-            )
-            completed_cluster_signals = int(cluster_signal_result.get("processed", 0) or 0) + int(
-                cluster_signal_result.get("skipped_existing", 0) or 0
-            )
-        except Exception as exc:
-            cluster_signal_error_detail = f"Cluster signal extraction failed: {exc}"
-            cluster_signal_result = {
+    )
+
+
+def _run_cluster_signal_stage(
+    cluster_result: dict[str, object],
+    *,
+    min_cluster_size: int,
+) -> tuple[dict[str, object], str | None, int]:
+    from extraction.cluster_extractor import run_cluster_extraction
+
+    started = time.perf_counter()
+    try:
+        result = run_cluster_extraction(
+            run_id=str(cluster_result["run_id"]),
+            overwrite=False,
+            min_cluster_size=min_cluster_size,
+        )
+        result["duration_s"] = round(time.perf_counter() - started, 4)
+        completed = int(result.get("processed", 0) or 0) + int(
+            result.get("skipped_existing", 0) or 0
+        )
+        return result, None, completed
+    except Exception as exc:
+        return (
+            {
                 "run_id": str(cluster_result["run_id"]),
                 "selected_clusters": int(cluster_result.get("n_clusters", 0) or 0),
                 "processed": 0,
@@ -445,94 +444,188 @@ async def run_full_pipeline(
                 "failed": int(cluster_result.get("n_clusters", 0) or 0),
                 "provider": "",
                 "model_name": "",
-                "duration_s": round(time.perf_counter() - signal_started, 4),
-            }
-            completed_cluster_signals = 0
-        if (
-            cluster_signal_error_detail is None
-            and int(cluster_signal_result.get("failed", 0) or 0) == 0
-            and completed_cluster_signals >= int(cluster_result.get("n_clusters", 0) or 0)
-        ):
-            drift_started = time.perf_counter()
-            try:
-                cluster_drift_result = run_cluster_drift(str(cluster_result["run_id"]))
-                cluster_drift_result["duration_s"] = round(
-                    time.perf_counter() - drift_started,
-                    4,
-                )
-            except Exception as exc:
-                cluster_drift_error_detail = f"Cluster drift failed: {exc}"
-                cluster_drift_result = None
+                "duration_s": round(time.perf_counter() - started, 4),
+            },
+            f"Cluster signal extraction failed: {exc}",
+            0,
+        )
 
+
+def _run_cluster_drift_stage(
+    cluster_result: dict[str, object],
+) -> tuple[dict[str, object] | None, str | None]:
+    from delta.cluster_drift import run_cluster_drift
+
+    started = time.perf_counter()
+    try:
+        result = run_cluster_drift(str(cluster_result["run_id"]))
+        result["duration_s"] = round(time.perf_counter() - started, 4)
+        return result, None
+    except Exception as exc:
+        return None, f"Cluster drift failed: {exc}"
+
+
+def _run_cluster_signal_and_drift(
+    cluster_result: dict[str, object],
+    *,
+    min_cluster_size: int,
+) -> tuple[
+    dict[str, object] | None,
+    dict[str, object] | None,
+    str | None,
+    str | None,
+]:
+    if not _cluster_produced_groups(cluster_result):
+        return None, None, None, None
+
+    signal_result, signal_error, completed_signals = _run_cluster_signal_stage(
+        cluster_result,
+        min_cluster_size=min_cluster_size,
+    )
+    required_signals = int(cluster_result.get("n_clusters", 0) or 0)
+    if (
+        signal_error is None
+        and int(signal_result.get("failed", 0) or 0) == 0
+        and completed_signals >= required_signals
+    ):
+        drift_result, drift_error = _run_cluster_drift_stage(cluster_result)
+    else:
+        drift_result, drift_error = None, None
+
+    return signal_result, drift_result, signal_error, drift_error
+
+
+def _generate_pipeline_brief(
+    topic: str,
+    *,
+    country: str,
+    source: str,
+    language: str | None,
+    cluster_result: dict[str, object],
+    cluster_drift_result: dict[str, object] | None,
+):
     if cluster_drift_result is not None:
-        brief = generate_hierarchical_brief_cached(
+        return generate_hierarchical_brief_cached(
             topic=topic,
-            country=normalized_country,
-            source=normalized_source,
-            language=normalized_language,
+            country=country,
+            source=source,
+            language=language,
             run_id=str(cluster_result["run_id"]),
         )
-    else:
-        brief = generate_brief_cached(
-            topic,
-            country=normalized_country,
-            source=normalized_source,
-            language=normalized_language,
-            prefer_cluster=False,
-            require_cluster=False,
-        )
-
-    counts = get_scope_counts(
+    return generate_brief_cached(
         topic,
-        country=normalized_country,
-        source=normalized_source,
-        language=normalized_language,
+        country=country,
+        source=source,
+        language=language,
+        prefer_cluster=False,
+        require_cluster=False,
     )
 
-    cluster_status = str(cluster_result.get("status", "not_run"))
-    cluster_stage_status = (
-        "completed"
-        if cluster_status == "completed"
-        else cluster_status
-    )
+
+def _build_cluster_signal_pipeline_stage(
+    *,
+    cluster_result: dict[str, object],
+    cluster_error_detail: str | None,
+    cluster_signal_result: dict[str, object] | None,
+    cluster_signal_error_detail: str | None,
+) -> dict[str, object]:
     if cluster_signal_result is None:
-        cluster_signal_stage = pipeline_stage(
+        return pipeline_stage(
             "skipped",
             detail=cluster_error_detail
             or "Cluster signals were skipped because clustering did not produce stable groups.",
             count=0,
         )
-    else:
-        failed = int(cluster_signal_result.get("failed", 0) or 0)
-        processed = int(cluster_signal_result.get("processed", 0) or 0)
-        cluster_signal_stage = pipeline_stage(
-            "completed" if failed == 0 else ("partial" if processed > 0 else "failed"),
-            detail=(
-                "Cluster signal extraction completed."
-                if failed == 0
-                else (cluster_signal_error_detail or "Some clusters failed signal extraction.")
-            ),
-            count=processed,
-            duration_s=float(cluster_signal_result.get("duration_s", 0.0) or 0.0),
-            metadata=dict(cluster_signal_result),
-        )
+
+    failed = int(cluster_signal_result.get("failed", 0) or 0)
+    processed = int(cluster_signal_result.get("processed", 0) or 0)
+    return pipeline_stage(
+        "completed" if failed == 0 else ("partial" if processed > 0 else "failed"),
+        detail=(
+            "Cluster signal extraction completed."
+            if failed == 0
+            else (cluster_signal_error_detail or "Some clusters failed signal extraction.")
+        ),
+        count=processed,
+        duration_s=float(cluster_signal_result.get("duration_s", 0.0) or 0.0),
+        metadata=dict(cluster_signal_result),
+    )
+
+
+def _build_cluster_drift_pipeline_stage(
+    *,
+    cluster_drift_result: dict[str, object] | None,
+    cluster_drift_error_detail: str | None,
+) -> dict[str, object]:
     if cluster_drift_result is None:
-        cluster_drift_stage = pipeline_stage(
+        return pipeline_stage(
             "skipped",
-            detail=cluster_drift_error_detail or "Cluster drift was unavailable for the current run.",
+            detail=cluster_drift_error_detail
+            or "Cluster drift was unavailable for the current run.",
             count=0,
         )
-    else:
-        cluster_drift_stage = pipeline_stage(
-            "completed",
-            detail="Cluster drift computed for the latest run.",
-            count=int(cluster_drift_result.get("observed_clusters", 0) or 0),
-            duration_s=float(cluster_drift_result.get("duration_s", 0.0) or 0.0),
-            metadata=dict(cluster_drift_result),
-        )
 
-    brief_payload = model_dump(brief)
-    summary = {
+    return pipeline_stage(
+        "completed",
+        detail="Cluster drift computed for the latest run.",
+        count=int(cluster_drift_result.get("observed_clusters", 0) or 0),
+        duration_s=float(cluster_drift_result.get("duration_s", 0.0) or 0.0),
+        metadata=dict(cluster_drift_result),
+    )
+
+
+def _build_embedding_pipeline_stage(
+    embed_result: dict[str, object],
+    *,
+    duration_s: float,
+) -> dict[str, object]:
+    failed = int(embed_result.get("failed", 0) or 0)
+    embedded = int(embed_result.get("embedded", 0) or 0)
+    return pipeline_stage(
+        "completed" if failed == 0 else ("partial" if embedded > 0 else "failed"),
+        detail="Embedding stage finished.",
+        count=embedded,
+        duration_s=duration_s,
+        metadata=dict(embed_result),
+    )
+
+
+def _build_full_pipeline_summary(
+    *,
+    topic: str,
+    topic_resolution,
+    country: str,
+    source: str,
+    language: str | None,
+    collection_result: dict[str, object],
+    collection_duration: float,
+    embed_result: dict[str, object],
+    embed_duration: float,
+    cluster_result: dict[str, object],
+    cluster_duration: float,
+    cluster_error_detail: str | None,
+    cluster_signal_result: dict[str, object] | None,
+    cluster_signal_error_detail: str | None,
+    cluster_drift_result: dict[str, object] | None,
+    cluster_drift_error_detail: str | None,
+    brief,
+    counts: dict[str, int],
+    started_at: float,
+) -> dict[str, object]:
+    cluster_status = str(cluster_result.get("status", "not_run"))
+    cluster_stage_status = "completed" if cluster_status == "completed" else cluster_status
+    cluster_signal_stage = _build_cluster_signal_pipeline_stage(
+        cluster_result=cluster_result,
+        cluster_error_detail=cluster_error_detail,
+        cluster_signal_result=cluster_signal_result,
+        cluster_signal_error_detail=cluster_signal_error_detail,
+    )
+    cluster_drift_stage = _build_cluster_drift_pipeline_stage(
+        cluster_drift_result=cluster_drift_result,
+        cluster_drift_error_detail=cluster_drift_error_detail,
+    )
+
+    return {
         "scope": {
             "topic": topic,
             "requested_topic": topic,
@@ -542,11 +635,11 @@ async def run_full_pipeline(
             "canonical_display_name": (
                 topic_resolution.display_name if topic_resolution else None
             ),
-            "country": normalized_country,
-            "source": normalized_source,
-            "language": normalized_language,
-            "collection_mode": str(collect_result.get("collection_mode", "")),
-            "reward_mode": str(collect_result.get("reward_mode", "")),
+            "country": country,
+            "source": source,
+            "language": language,
+            "collection_mode": str(collection_result.get("collection_mode", "")),
+            "reward_mode": str(collection_result.get("reward_mode", "")),
         },
         "run_id": cluster_result.get("run_id"),
         "generated_at": utc_now_iso(),
@@ -564,34 +657,28 @@ async def run_full_pipeline(
                 "collect": pipeline_stage(
                     "completed",
                     detail="Collection cycle finished.",
-                    count=int(collect_result.get("inserted", 0) or 0),
-                    duration_s=collect_duration,
-                    metadata=dict(collect_result),
+                    count=int(collection_result.get("inserted", 0) or 0),
+                    duration_s=collection_duration,
+                    metadata=dict(collection_result),
                 ),
                 "extract": pipeline_stage(
                     "completed",
                     detail="Article-level extraction finished.",
-                    count=int(collect_result.get("extracted", 0) or 0),
+                    count=int(collection_result.get("extracted", 0) or 0),
                     metadata={
-                        "rewards_recorded": int(collect_result.get("rewards_recorded", 0) or 0),
+                        "rewards_recorded": int(
+                            collection_result.get("rewards_recorded", 0) or 0
+                        ),
                     },
                 ),
-                "embed": pipeline_stage(
-                    "completed"
-                    if int(embed_result.get("failed", 0) or 0) == 0
-                    else (
-                        "partial"
-                        if int(embed_result.get("embedded", 0) or 0) > 0
-                        else "failed"
-                    ),
-                    detail="Embedding stage finished.",
-                    count=int(embed_result.get("embedded", 0) or 0),
+                "embed": _build_embedding_pipeline_stage(
+                    embed_result,
                     duration_s=embed_duration,
-                    metadata=dict(embed_result),
                 ),
                 "cluster": pipeline_stage(
                     cluster_stage_status,
-                    detail=cluster_error_detail or "Cluster run finished for the requested scope.",
+                    detail=cluster_error_detail
+                    or "Cluster run finished for the requested scope.",
                     count=int(cluster_result.get("n_clusters", 0) or 0),
                     duration_s=cluster_duration,
                     metadata=dict(cluster_result),
@@ -618,5 +705,92 @@ async def run_full_pipeline(
             "generation_mode": brief.generation_mode,
         },
     }
+
+
+async def run_full_pipeline(
+    topic: str,
+    *,
+    country: str = "",
+    source: str = "",
+    language: str | None = None,
+    window_hours: int = 24,
+    min_cluster_size: int = 3,
+    collection_mode: str | None = None,
+    reward_mode: str | None = None,
+) -> dict[str, object]:
+    started_at = time.perf_counter()
+    normalized_country = normalize_country(country)
+    normalized_source = normalize_source(source)
+    normalized_language = normalize_language(language)
+    topic_resolution = resolve_topic(topic) if topic.strip() else None
+
+    collect_started = time.perf_counter()
+    collect_result = await run_collection_cycle(
+        topic,
+        country=normalized_country,
+        source=normalized_source,
+        collection_mode=collection_mode,
+        reward_mode=reward_mode,
+    )
+    collect_duration = round(time.perf_counter() - collect_started, 4)
+
+    embed_result, embed_duration = _run_embedding_stage(
+        topic,
+        country=normalized_country,
+        source=normalized_source,
+    )
+    cluster_result, cluster_duration, cluster_error_detail = _run_cluster_stage(
+        topic,
+        country=normalized_country,
+        source=normalized_source,
+        language=normalized_language,
+        window_hours=window_hours,
+        min_cluster_size=min_cluster_size,
+    )
+    (
+        cluster_signal_result,
+        cluster_drift_result,
+        cluster_signal_error_detail,
+        cluster_drift_error_detail,
+    ) = _run_cluster_signal_and_drift(
+        cluster_result,
+        min_cluster_size=min_cluster_size,
+    )
+
+    brief = _generate_pipeline_brief(
+        topic,
+        country=normalized_country,
+        source=normalized_source,
+        language=normalized_language,
+        cluster_result=cluster_result,
+        cluster_drift_result=cluster_drift_result,
+    )
+    counts = get_scope_counts(
+        topic,
+        country=normalized_country,
+        source=normalized_source,
+        language=normalized_language,
+    )
+    summary = _build_full_pipeline_summary(
+        topic=topic,
+        topic_resolution=topic_resolution,
+        country=normalized_country,
+        source=normalized_source,
+        language=normalized_language,
+        collection_result=collect_result,
+        collection_duration=collect_duration,
+        embed_result=embed_result,
+        embed_duration=embed_duration,
+        cluster_result=cluster_result,
+        cluster_duration=cluster_duration,
+        cluster_error_detail=cluster_error_detail,
+        cluster_signal_result=cluster_signal_result,
+        cluster_signal_error_detail=cluster_signal_error_detail,
+        cluster_drift_result=cluster_drift_result,
+        cluster_drift_error_detail=cluster_drift_error_detail,
+        brief=brief,
+        counts=counts,
+        started_at=started_at,
+    )
     _store_pipeline_run_summary(summary)
     return summary

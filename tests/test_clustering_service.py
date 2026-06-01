@@ -11,28 +11,8 @@ import pytest
 
 import db.init
 from clustering.clustering_service import get_latest_cluster_run, run_clustering
+from db_helpers import ORIGINAL_DB_PATH, cleanup_temp_db, setup_temp_db
 from extraction.embedder import get_expected_dim, get_model_name
-
-
-ORIGINAL_DB_PATH = db.init.DB_PATH
-
-
-def setup_temp_db() -> tempfile.TemporaryDirectory:
-    temp_dir = tempfile.TemporaryDirectory()
-    db.init.DB_PATH = Path(temp_dir.name) / "sigdriftr.db"
-    if hasattr(db.init._local, "conn"):
-        db.init._local.conn.close()
-        delattr(db.init._local, "conn")
-    db.init.get_conn()
-    return temp_dir
-
-
-def cleanup_temp_db(temp_dir: tempfile.TemporaryDirectory) -> None:
-    if hasattr(db.init._local, "conn"):
-        db.init._local.conn.close()
-        delattr(db.init._local, "conn")
-    db.init.DB_PATH = ORIGINAL_DB_PATH
-    temp_dir.cleanup()
 
 
 def insert_article(
@@ -42,9 +22,14 @@ def insert_article(
     country: str = "CZ",
     language: str = "cs",
     outlet: str = "irozhlas",
+    title: str | None = None,
+    summary: str | None = None,
+    body: str | None = None,
+    canonical_url: str | None = None,
     published_at: str = "2026-03-18T10:00:00+00:00",
 ) -> None:
     conn = db.init.get_conn()
+    compact_id = article_id.replace("-", "")
     conn.execute(
         """
         INSERT INTO articles
@@ -54,11 +39,11 @@ def insert_article(
         (
             article_id,
             outlet,
-            f"Title {article_id}",
-            f"Summary {article_id}",
-            f"Body {article_id}",
+            title or f"title{compact_id}",
+            summary or f"summary{compact_id}",
+            body or f"body{compact_id}",
             f"https://example.test/{article_id}",
-            f"https://example.test/{article_id}",
+            canonical_url or f"https://example.test/{article_id}",
             topic,
             country,
             language,
@@ -195,6 +180,10 @@ def test_db_migration_adds_cluster_tables_and_types() -> None:
             row[1]: (row[2], row[4])
             for row in conn.execute("PRAGMA table_info(cluster_runs)").fetchall()
         }
+        dedupe_columns = {
+            row[1]: (row[2], row[4])
+            for row in conn.execute("PRAGMA table_info(cluster_dedupe_stats)").fetchall()
+        }
         indexes = {
             row[0]
             for row in conn.execute(
@@ -212,6 +201,7 @@ def test_db_migration_adds_cluster_tables_and_types() -> None:
         "cluster_runs",
         "clusters",
         "cluster_memberships",
+        "cluster_dedupe_stats",
         "cluster_signals",
         "cluster_tracks",
         "cluster_drift_runs",
@@ -236,6 +226,8 @@ def test_db_migration_adds_cluster_tables_and_types() -> None:
     assert "idx_cluster_drift_runs_scope_computed" in indexes
     assert "idx_cluster_drift_observations_run_track" in indexes
     assert "idx_cluster_segment_drifts_run_segment" in indexes
+    assert dedupe_columns["run_id"][0] == "TEXT"
+    assert dedupe_columns["duplicates_removed"][0] == "INTEGER"
 
 
 def test_run_clustering_uses_latest_complete_embedding_and_records_embedding_id() -> None:
@@ -463,3 +455,73 @@ def test_cluster_runs_are_lookupable_through_canonical_topic_aliases() -> None:
     assert latest["run_id"] == result["run_id"]
     assert latest["topic"] == "energie"
     assert latest["canonical_topic_id"] == "energy"
+
+
+def test_run_clustering_filters_near_duplicates_and_persists_dedupe_stats() -> None:
+    temp_dir = setup_temp_db()
+    try:
+        articles = [
+            ("exact-main", "Same inflation title", make_vector(4.0, 0.0, 0.0), "long body " * 20),
+            ("exact-copy", "Same inflation title", make_vector(4.1, 0.0, 0.0), "short body"),
+            ("semantic-main", "Energy prices keep pressure on homes", make_vector(0.0, 4.0, 0.0), "long energy body " * 20),
+            ("semantic-copy", "Energy prices keep pressure on homes again", make_vector(0.0, 4.2, 0.0), "energy body copy"),
+            ("unique-1", "Healthcare story differs", make_vector(0.0, 0.0, 4.0), "health body"),
+            ("unique-2", "Political story differs", make_vector(3.0, 0.0, 0.0), "politics body"),
+            ("unique-3", "Markets story differs", make_vector(0.0, 3.0, 0.0), "markets body"),
+        ]
+        for article_id, title, vector, body in articles:
+            insert_article(article_id, title=title, body=body)
+            insert_embedding(article_id, vector, embedding_text=article_id)
+
+        with patch(
+            "clustering.clustering_service.reduce_embeddings",
+            side_effect=fake_reduce,
+        ), patch(
+            "clustering.clustering_service.cluster_reduced",
+            side_effect=fake_cluster_by_dominant_axis,
+        ):
+            result = run_clustering(
+                topic="inflace",
+                window_hours=99999,
+                min_cluster_size=2,
+            )
+
+        conn = db.init.get_conn()
+        membership_rows = conn.execute(
+            """
+            SELECT article_id
+            FROM cluster_memberships
+            WHERE run_id = ?
+            ORDER BY article_id ASC
+            """,
+            (result["run_id"],),
+        ).fetchall()
+        dedupe_row = conn.execute(
+            """
+            SELECT raw_article_count, cluster_input_count, duplicate_group_count,
+                   duplicates_removed, duplicate_groups_json
+            FROM cluster_dedupe_stats
+            WHERE run_id = ?
+            """,
+            (result["run_id"],),
+        ).fetchone()
+        latest = get_latest_cluster_run(topic="inflace")
+    finally:
+        cleanup_temp_db(temp_dir)
+
+    assert result["status"] == "completed"
+    assert result["n_articles"] == 7
+    assert result["dedupe"]["cluster_input_count"] == 5
+    assert result["dedupe"]["duplicates_removed"] == 2
+    assert [row[0] for row in membership_rows] == [
+        "exact-main",
+        "semantic-main",
+        "unique-1",
+        "unique-2",
+        "unique-3",
+    ]
+    assert dedupe_row[:4] == (7, 5, 2, 2)
+    groups = json.loads(dedupe_row[4])
+    assert len(groups) == 2
+    assert latest is not None
+    assert latest["dedupe"]["duplicates_removed"] == 2

@@ -335,6 +335,13 @@ select {
   box-shadow: 0 0 0 2px rgba(45, 94, 151, 0.14);
 }
 
+.validation-warning {
+  margin-top: 14px;
+  border-left: 3px solid var(--warn);
+  background: #fff6e8;
+  padding: 10px 12px;
+}
+
 .story-board {
   display: grid;
   gap: 12px;

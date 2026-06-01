@@ -382,7 +382,7 @@ curl "http://localhost:8000/drift/energie?days_back=7"
 - On subsequent runs, compares to stored canonical-topic baselines
 - Drift magnitude = 0.333 * |Δ concern| + 0.333 * |Δ purchase| + 0.334 * |Δ avoidance|
 - Frame shift indicates change in dominant narrative
-- Confidence is a coverage/baseline readiness heuristic, not calibrated correctness
+- The `confidence` field is a coverage/baseline signal-readiness heuristic, not calibrated correctness
 - Source mix reports outlet composition for the current window against the previous same-length window
 - `source_normalized` is a bounded fixed-panel comparison. It recomputes the current segment profile by first averaging per outlet, then applying equal weights across observed outlets in the configured fixed panel. It is useful for detecting when raw drift may be inflated by outlet mix, but it is not a causal correction and does not replace raw drift.
 - `source_normalized.status` can be `ready`, `partial_panel`, `no_panel_overlap`, or `missing_baseline`.

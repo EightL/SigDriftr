@@ -10,9 +10,9 @@ LOW_CONFIDENCE_WARNING = (
 
 def confidence_label(confidence: float) -> str:
     if confidence >= HIGH_BRIEF_CONFIDENCE:
-        return "high confidence"
+        return "high signal readiness"
     if confidence >= MIN_BRIEF_CONFIDENCE:
-        return "medium confidence"
+        return "medium signal readiness"
     return "exploratory finding"
 
 

@@ -14,6 +14,7 @@ from delta.mapper import compute_segment_profiles
 from delta.seeder import seed_baselines
 from extraction.cluster_extractor import (
     ClusterMember,
+    _coherence_score,
     _membership_fingerprint,
     _select_exemplars,
     run_cluster_extraction,
@@ -310,6 +311,18 @@ def test_membership_fingerprint_is_order_invariant() -> None:
     assert _membership_fingerprint(members_a) == _membership_fingerprint(members_b)
 
 
+def test_coherence_score_averages_centroid_similarity() -> None:
+    score = _coherence_score(
+        [
+            member("a-1", make_vector(1.0, 0.0), membership_strength=0.8),
+            member("a-2", make_vector(0.0, 1.0), membership_strength=0.6),
+        ],
+        make_vector(1.0, 0.0),
+    )
+
+    assert score == 0.5
+
+
 def test_select_exemplars_prefers_similarity_then_strength_then_recency() -> None:
     centroid = make_vector(1.0, 0.0)
     exemplars = _select_exemplars(
@@ -360,7 +373,8 @@ def test_run_cluster_extraction_persists_one_row_per_eligible_cluster() -> None:
 
         rows = db.init.get_conn().execute(
             """
-            SELECT cluster_id, topic_label, exemplar_article_ids, extractor_provider, extractor_model
+            SELECT cluster_id, topic_label, exemplar_article_ids, coherence_score,
+                   extractor_provider, extractor_model
             FROM cluster_signals
             WHERE run_id = ?
             ORDER BY cluster_id ASC
@@ -377,10 +391,12 @@ def test_run_cluster_extraction_persists_one_row_per_eligible_cluster() -> None:
     assert [row[0] for row in rows] == [cluster_a_id, cluster_b_id]
     assert rows[0][1] == "Cluster A"
     assert len(json.loads(rows[0][2])) == 3
-    assert rows[0][3] == get_cluster_signal_provider()
-    assert rows[0][4] == get_cluster_signal_model()
+    assert rows[0][3] > 0.95
+    assert rows[0][4] == get_cluster_signal_provider()
+    assert rows[0][5] == get_cluster_signal_model()
     assert latest is not None
     assert latest["clusters"][0]["signal"]["topic_label"] == "Cluster A"
+    assert latest["clusters"][0]["signal"]["coherence_score"] > 0.95
 
 
 def test_run_cluster_extraction_is_idempotent_until_overwrite() -> None:

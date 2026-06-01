@@ -575,6 +575,7 @@ def get_latest_cluster_run(
             member_count,
             membership_fingerprint,
             exemplar_article_ids,
+            coherence_score,
             extractor_provider,
             extractor_model,
             schema_version,
@@ -616,10 +617,11 @@ def get_latest_cluster_run(
             "exemplar_articles": _load_article_context(
                 [str(item) for item in _safe_json_list(row[16]) if isinstance(item, str)]
             ),
-            "extractor_provider": row[17],
-            "extractor_model": row[18],
-            "schema_version": row[19],
-            "extracted_at": row[20],
+            "coherence_score": float(row[17] or 0.0),
+            "extractor_provider": row[18],
+            "extractor_model": row[19],
+            "schema_version": row[20],
+            "extracted_at": row[21],
         }
         for row in signal_rows
     }

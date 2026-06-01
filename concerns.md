@@ -389,7 +389,8 @@ seg_senior_relevance,seg_b2b_relevance,annotator_id,notes
 
 ### Phase 5: Validate Clusters and Briefs
 
-- Add cluster stability/coherence reports.
+- Add cluster stability reports. Centroid coherence is now persisted as
+  `cluster_signals.coherence_score`; bootstrap stability is still future work.
 - Add near-duplicate detection before clustering.
 - Add claim-to-evidence validation for generated briefs.
 - Run human comparison of article-level vs cluster-aware briefs.

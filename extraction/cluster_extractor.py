@@ -105,6 +105,19 @@ def _membership_fingerprint(members: list[ClusterMember]) -> str:
     ).hexdigest()
 
 
+def _coherence_score(
+    members: list[ClusterMember],
+    centroid_vector: list[float],
+) -> float:
+    if not members:
+        return 0.0
+    similarities = [
+        max(0.0, min(1.0, _cosine_similarity(member.embedding_vector, centroid_vector)))
+        for member in members
+    ]
+    return round(sum(similarities) / len(similarities), 4)
+
+
 def _select_exemplars(
     members: list[ClusterMember],
     centroid_vector: list[float],
@@ -297,8 +310,9 @@ def run_cluster_extraction(
              avoidance_signals, sentiment, dominant_frame, frame_detail,
              seg_young_urban, seg_family, seg_senior, seg_b2b, evidence_json,
              raw_json, member_count, membership_fingerprint, exemplar_article_ids,
-             extractor_provider, extractor_model, schema_version, extracted_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             coherence_score, extractor_provider, extractor_model, schema_version,
+             extracted_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 target.cluster_id,
@@ -319,6 +333,7 @@ def run_cluster_extraction(
                 len(target.members),
                 _membership_fingerprint(target.members),
                 json.dumps([member.article_id for member in exemplars], ensure_ascii=False),
+                _coherence_score(target.members, target.centroid_vector),
                 get_cluster_signal_provider(),
                 get_cluster_signal_model(),
                 SCHEMA_VERSION,

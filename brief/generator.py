@@ -25,6 +25,7 @@ from brief.prompt import (
     build_json_input_block,
     confidence_label,
 )
+from brief.validator import validate_brief, validation_issues_as_dicts
 from config.settings import MIN_BRIEF_CONFIDENCE
 from db.init import get_conn
 from db.topic_queries import topic_filter_sql
@@ -1107,19 +1108,35 @@ def _selected_observation_ids(bundle: BriefBundle) -> list[str]:
 def _brief_support_payload(
     bundle: BriefBundle,
     *,
+    brief: ResearchBrief | None = None,
     generation_mode: str | None,
     cited_track_ids: list[str] | None = None,
     cited_article_ids: list[str] | None = None,
     fallback_note: str | None = None,
 ) -> dict[str, object]:
+    cited_tracks = list(dict.fromkeys(cited_track_ids or []))
+    cited_articles = list(dict.fromkeys(cited_article_ids or []))
+    validation_issues = (
+        validation_issues_as_dicts(
+            validate_brief(
+                brief,
+                bundle=bundle,
+                cited_track_ids=cited_tracks,
+                cited_article_ids=cited_articles,
+            )
+        )
+        if brief is not None
+        else []
+    )
     return {
         "status": bundle.status,
         "source_mode": bundle.resolution.source_mode,
         "generation_mode": generation_mode,
-        "cited_track_ids": list(dict.fromkeys(cited_track_ids or [])),
-        "cited_article_ids": list(dict.fromkeys(cited_article_ids or [])),
+        "cited_track_ids": cited_tracks,
+        "cited_article_ids": cited_articles,
         "selected_observation_ids": _selected_observation_ids(bundle),
         "fallback_note": fallback_note,
+        "validation_issues": validation_issues,
     }
 
 
@@ -1383,6 +1400,7 @@ def _generate_hierarchical_brief_artifacts(bundle: BriefBundle) -> BriefArtifact
             brief=brief,
             support=_brief_support_payload(
                 bundle,
+                brief=brief,
                 generation_mode=brief.generation_mode,
                 fallback_note="Insufficient data brief did not emit analyst citations.",
             ),
@@ -1400,6 +1418,7 @@ def _generate_hierarchical_brief_artifacts(bundle: BriefBundle) -> BriefArtifact
             brief=brief,
             support=_brief_support_payload(
                 bundle,
+                brief=brief,
                 generation_mode=brief.generation_mode,
                 fallback_note="Analyst stage failed; citations unavailable in fallback brief.",
             ),
@@ -1414,6 +1433,7 @@ def _generate_hierarchical_brief_artifacts(bundle: BriefBundle) -> BriefArtifact
             brief=brief,
             support=_brief_support_payload(
                 bundle,
+                brief=brief,
                 generation_mode=brief.generation_mode,
                 fallback_note="Explainer stage failed; citations unavailable in fallback brief.",
             ),
@@ -1425,6 +1445,7 @@ def _generate_hierarchical_brief_artifacts(bundle: BriefBundle) -> BriefArtifact
             brief=brief,
             support=_brief_support_payload(
                 bundle,
+                brief=brief,
                 generation_mode=brief.generation_mode,
                 cited_track_ids=list(analyst.cited_clusters),
                 cited_article_ids=list(analyst.cited_articles),
@@ -1441,6 +1462,7 @@ def _generate_hierarchical_brief_artifacts(bundle: BriefBundle) -> BriefArtifact
             brief=brief,
             support=_brief_support_payload(
                 bundle,
+                brief=brief,
                 generation_mode=brief.generation_mode,
                 fallback_note="Writer stage failed; citations unavailable in fallback brief.",
             ),

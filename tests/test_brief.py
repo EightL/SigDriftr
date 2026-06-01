@@ -19,6 +19,7 @@ from brief.generator import (
     clear_brief_cache,
     generate_brief,
     generate_brief_cached,
+    get_brief_support,
 )
 from brief.models import ResearchBrief
 from brief.prompt import LOW_CONFIDENCE_WARNING
@@ -1114,7 +1115,7 @@ def test_generate_brief_adds_high_confidence_qualifier() -> None:
         cleanup_temp_db(temp_dir)
 
     assert brief.status == "ready"
-    assert "high confidence" in brief.narrative.lower()
+    assert "high signal readiness" in brief.narrative.lower()
 
 
 def test_generate_brief_prefers_cluster_snapshot_and_adds_calibration_metadata() -> None:
@@ -1160,6 +1161,31 @@ def test_generate_brief_prefers_cluster_snapshot_and_adds_calibration_metadata()
     }
     assert brief.calibration_weights.top_cluster_priorities
     assert mock_call.call_count == 3
+
+
+def test_brief_support_includes_validation_issues_for_bad_citations() -> None:
+    temp_dir = setup_temp_db()
+    try:
+        segments = sample_cluster_drift_payload()["segments"]
+        with patch("brief.generator.get_latest_cluster_drift", return_value=None), patch(
+            "brief.generator.compute_drift",
+            return_value=segments,
+        ), patch(
+            "brief.generator._call_ollama_json",
+            side_effect=[
+                sample_analyst_output(),
+                sample_explainer_output(),
+                sample_writer_output(),
+            ],
+        ):
+            brief = generate_brief_cached("inflace", prefer_cluster=False)
+            support = get_brief_support("inflace", prefer_cluster=False)
+    finally:
+        cleanup_temp_db(temp_dir)
+
+    assert brief.generation_mode == "hierarchical_legacy"
+    codes = {issue["code"] for issue in support["validation_issues"]}
+    assert "cited_track_not_selected" in codes
 
 
 def test_generate_brief_run_id_wins_over_scope_lookup() -> None:

@@ -46,6 +46,35 @@ The report includes overall, per-group, per-field, and per-topic accuracy/F1,
 plus expected-vs-predicted distributions. Blank labels are skipped, though the
 semi-gold baseline is complete across all 1,800 article-field decisions.
 
+CI also runs the checked-in ChatGPT prediction file with minimum thresholds:
+
+```bash
+python scripts/evaluate_weak_gold.py \
+  --predictions eval/model_outputs/czenec_batch_200_chatgpt.json \
+  --min-accuracy 0.75 \
+  --min-macro-f1 0.65
+```
+
+## Brief Regression
+
+The article semi-gold file evaluates extractor labels, not generated briefs. For
+brief regression, use frozen brief golden records with expected structured
+`ResearchBrief` fields and support expectations:
+
+```bash
+python scripts/evaluate_briefs.py \
+  --goldens eval/briefs/golden_briefs.jsonl \
+  --predictions eval/model_outputs/current_brief_predictions.json \
+  --output eval/reports/current_brief_eval.json
+```
+
+The brief report scores exact-match fields (`status`, `most_affected_segment`,
+`drift_type`, `alert_level`), support coverage (`required_track_ids`,
+`forbidden_track_ids`, `required_article_ids`), expected hypothesis segments,
+fallback rate, generation-mode distribution, and internal validation warnings.
+Goldens may embed a frozen `cluster_snapshot` so the current generator can be
+run without depending on the latest database state.
+
 ## Current Baseline Results
 
 Against `czech_batch_200_semi_gold.csv`:

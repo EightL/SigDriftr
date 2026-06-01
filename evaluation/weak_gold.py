@@ -593,6 +593,16 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=DEFAULT_REPORT_PATH,
         help="Where to write the evaluation report JSON.",
     )
+    parser.add_argument(
+        "--min-accuracy",
+        type=float,
+        help="Fail if overall accuracy is below this threshold.",
+    )
+    parser.add_argument(
+        "--min-macro-f1",
+        type=float,
+        help="Fail if overall macro F1 is below this threshold.",
+    )
     return parser
 
 
@@ -619,6 +629,24 @@ def main(argv: list[str] | None = None) -> int:
         predictions_path=predictions_path,
     )
     write_report(report, args.output)
+    if (
+        args.min_accuracy is not None
+        and report["overall"]["accuracy"] is not None
+        and report["overall"]["accuracy"] < args.min_accuracy
+    ):
+        raise EvaluationError(
+            f"Overall accuracy {report['overall']['accuracy']} is below "
+            f"--min-accuracy {args.min_accuracy}."
+        )
+    if (
+        args.min_macro_f1 is not None
+        and report["overall"]["macro_f1"] is not None
+        and report["overall"]["macro_f1"] < args.min_macro_f1
+    ):
+        raise EvaluationError(
+            f"Overall macro F1 {report['overall']['macro_f1']} is below "
+            f"--min-macro-f1 {args.min_macro_f1}."
+        )
     print(
         json.dumps(
             {

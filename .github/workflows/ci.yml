@@ -28,3 +28,11 @@ jobs:
 
       - name: Run tests
         run: pytest -q
+
+      - name: Run semi-gold evaluator gate
+        run: |
+          python scripts/evaluate_weak_gold.py \
+            --predictions eval/model_outputs/czenec_batch_200_chatgpt.json \
+            --output /tmp/chatgpt_vs_semi_gold.json \
+            --min-accuracy 0.75 \
+            --min-macro-f1 0.65

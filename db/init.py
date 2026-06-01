@@ -516,6 +516,7 @@ def _ensure_cluster_signal_schema(conn: sqlite3.Connection) -> None:
             member_count            INTEGER NOT NULL,
             membership_fingerprint  TEXT    NOT NULL,
             exemplar_article_ids    TEXT    NOT NULL,
+            coherence_score         REAL    NOT NULL DEFAULT 0.0,
             extractor_provider      TEXT    NOT NULL,
             extractor_model         TEXT    NOT NULL,
             schema_version          TEXT    NOT NULL DEFAULT 'v1',
@@ -1044,6 +1045,12 @@ def run_migrations(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_cluster_drift_runs_canonical_scope_computed
         ON cluster_drift_runs(canonical_topic_id, country, source, language, computed_at DESC)
         """,
+    )
+    _add_column_if_missing(
+        conn,
+        "cluster_signals",
+        "coherence_score",
+        "coherence_score REAL NOT NULL DEFAULT 0.0",
     )
 
     _backfill_article_topic_links(conn)

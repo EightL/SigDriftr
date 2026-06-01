@@ -186,6 +186,7 @@ class ClusterSignalRecord(BaseModel):
     membership_fingerprint: str
     exemplar_article_ids: list[str] = Field(default_factory=list)
     exemplar_articles: list[EvidenceArticle] = Field(default_factory=list)
+    coherence_score: float = 0.0
     extractor_provider: str
     extractor_model: str
     schema_version: str
@@ -375,6 +376,7 @@ class BriefSupportResponse(BaseModel):
     cited_article_ids: list[str] = Field(default_factory=list)
     selected_observation_ids: list[str] = Field(default_factory=list)
     fallback_note: str | None = None
+    validation_issues: list[dict[str, object]] = Field(default_factory=list)
 
 
 class OutputClusterDriftResponse(BaseModel):

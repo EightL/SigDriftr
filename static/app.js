@@ -90,7 +90,7 @@ function destroyChart(index) {
 
 function statusNote(status) {
   if (status === "ready") {
-    return "Ready: cluster drift and brief confidence are high enough for normal demo use.";
+    return "Ready: cluster drift and signal readiness are high enough for normal demo use.";
   }
   if (status === "warming") {
     return "Warming: interpret with care while coverage and baselines stabilize.";
@@ -164,6 +164,26 @@ function briefCitations(data, slot) {
   `;
 }
 
+function briefValidationIssues(data) {
+  const issues = data?.brief_support?.validation_issues || [];
+  if (!issues.length) {
+    return "";
+  }
+  const visible = issues.slice(0, 3);
+  const suffix = issues.length > visible.length
+    ? `<li>${issues.length - visible.length} more internal checks flagged.</li>`
+    : "";
+  return `
+    <div class="validation-warning">
+      <div class="brief-label">Validation Checks</div>
+      <ul class="bullet-list">
+        ${visible.map((issue) => `<li>${escapeHtml(issue.message || issue.code || "Validation warning")}</li>`).join("")}
+        ${suffix}
+      </ul>
+    </div>
+  `;
+}
+
 function renderStoryBoard(data, slot) {
   const groups = storyGroups(data);
   const cited = new Set(data?.brief_support?.cited_track_ids || []);
@@ -188,7 +208,7 @@ function renderStoryBoard(data, slot) {
                 <div class="story-meta">
                   ${formatMetaPill(item.direction || "stable", item.direction || "stable")}
                   ${formatMetaPill(`${item.member_count || 0} articles`)}
-                  ${formatMetaPill(`conf ${Number(item.confidence || 0).toFixed(2)}`)}
+                  ${formatMetaPill(`ready ${Number(item.confidence || 0).toFixed(2)}`)}
                 </div>
                 <div class="panel-scope-note">
                   Drift ${Number(item.drift_magnitude || 0).toFixed(2)} | Frame ${escapeHtml(item.dominant_frame || "n/a")}
@@ -273,6 +293,7 @@ function renderBrief(data, slot) {
         ${formatMetaPill(`mode ${brief.generation_mode || "n/a"}`)}
       </div>
       ${briefCitations(data, slot)}
+      ${briefValidationIssues(data)}
       ${supportNote}
     </div>
   `;

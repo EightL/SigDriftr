@@ -224,6 +224,7 @@ def test_db_migration_adds_cluster_tables_and_types() -> None:
     assert membership_columns["embedding_id"][0] == "INTEGER"
     assert cluster_signal_columns["cluster_id"][0] == "INTEGER"
     assert cluster_signal_columns["extractor_provider"][0] == "TEXT"
+    assert cluster_signal_columns["coherence_score"][0] == "REAL"
     assert cluster_track_columns["track_id"][0] == "TEXT"
     assert cluster_track_columns["status"][0] == "TEXT"
     assert "datetime" in str(membership_columns["created_at"][1]).lower()

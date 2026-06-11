@@ -56,9 +56,22 @@ curl -X POST "http://localhost:8000/collect?topic=energie"
   "rewards_recorded": 0,
   "collection_mode": "bandit",
   "reward_mode": "yield",
+  "eligible_feeds": ["irozhlas", "ct24", "idnes", "e15", "novinky", "blesk"],
   "selected_feeds": ["irozhlas", "ct24", "e15"],
   "accepted": 24,
-  "duplicates": 2
+  "duplicates": 2,
+  "fetch_successful": 3,
+  "fetch_failed": 0,
+  "entries_seen": 180,
+  "candidates": 31,
+  "fetch_success_rate": 1.0,
+  "candidate_rate": 0.1722,
+  "acceptance_rate": 0.1333,
+  "duplicate_rate": 0.0833,
+  "accepted_per_second": 0.42,
+  "fetch_concurrency": 4,
+  "feed_batch_size": 50,
+  "duration_s": 56.87
 }
 ```
 
@@ -69,7 +82,9 @@ curl -X POST "http://localhost:8000/collect?topic=energie"
   same article history without duplicating article rows
 - `bandit` selection uses LinUCB; `fixed_panel` and `all` are available for reproducible eval/demo runs
 - Default bandit rewards use non-LLM article yield, relevance, and duplicate-adjusted collection results
-- Concurrent feed fetching (timeout: 10 sec per feed)
+- Runtime crawl knobs: `BANDIT_MAX_FEEDS_PER_CRAWL`, `CRAWL_FETCH_CONCURRENCY`,
+  `CRAWL_FEED_TIMEOUT_SECONDS`, and `CRAWL_BATCH_SIZE`
+- Concurrent feed fetching defaults to 4 requests, batched in groups of 50, with a 15 second timeout per feed
 - Time: 2-5 minutes depending on feed latency
 
 **Errors:**

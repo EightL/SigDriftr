@@ -401,7 +401,11 @@ User Input: topic="energie"
     ↓
 [1] POST /collect?topic=energie
     ├─ Select feeds via collection_mode=bandit|fixed_panel|all
-    ├─ Fetch feeds concurrently (timeout: 10 sec per feed)
+    ├─ Fetch feeds concurrently in batches
+    │  ├─ BANDIT_MAX_FEEDS_PER_CRAWL controls bandit selection size
+    │  ├─ CRAWL_FETCH_CONCURRENCY controls concurrent feed/article fetches
+    │  ├─ CRAWL_BATCH_SIZE limits selected-feed task fanout
+    │  └─ CRAWL_FEED_TIMEOUT_SECONDS controls per-request timeout
     ├─ Filter articles:
     │  ├─ Direct match: "energie" in title/summary
     │  └─ Semantic: embedding_similarity > 0.7
@@ -409,7 +413,8 @@ User Input: topic="energie"
     ├─ Insert 24 articles into SQLite
     ├─ Link articles through article_topics(raw_topic="energie", canonical_topic_id="energy")
     ├─ Record collection_runs + collection_feed_stats
-    └─ Response includes selected_feeds, accepted, duplicates, and reward_mode
+    └─ Response includes selected_feeds, accepted, duplicates, fetch rates,
+       entry/candidate counts, crawl settings, and reward_mode
     ↓
 [2] POST /extract?topic=energie
     ├─ Query 24 articles without signals

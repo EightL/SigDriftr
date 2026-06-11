@@ -81,6 +81,10 @@ def test_db_migration_adds_stage_one_columns_and_topic_links() -> None:
         article_columns = {
             row[1] for row in conn.execute("PRAGMA table_info(articles)").fetchall()
         }
+        collection_run_columns = {
+            row[1]
+            for row in conn.execute("PRAGMA table_info(collection_runs)").fetchall()
+        }
         topic_rows = conn.execute(
             "SELECT article_id, topic FROM article_topics ORDER BY article_id, topic"
         ).fetchall()
@@ -98,6 +102,14 @@ def test_db_migration_adds_stage_one_columns_and_topic_links() -> None:
         temp_dir.cleanup()
 
     assert {"body", "country", "language", "canonical_url"}.issubset(article_columns)
+    assert {
+        "fetch_successful",
+        "fetch_failed",
+        "entries_seen",
+        "candidates",
+        "fetch_concurrency",
+        "feed_batch_size",
+    }.issubset(collection_run_columns)
     assert topic_rows == [("legacy-1", "inflace")]
     assert {"collection_runs", "collection_feed_stats"}.issubset(table_names)
 
@@ -118,16 +130,15 @@ def test_crawl_filters_feeds_by_country_and_source() -> None:
         cleanup_temp_db(temp_dir)
 
     assert inserted == 0
-    assert captured["feeds"] == [
-        {
-            "outlet": "spiegel",
-            "rss_url": "https://www.spiegel.de/schlagzeilen/index.rss",
-            "affinity_tag": "mainstream",
-            "country": "DE",
-            "language": "de",
-            "enabled": True,
-        }
-    ]
+    assert len(captured["feeds"]) == 1
+    assert {
+        "outlet": "spiegel",
+        "rss_url": "https://www.spiegel.de/schlagzeilen/index.rss",
+        "affinity_tag": "mainstream",
+        "country": "DE",
+        "language": "de",
+        "enabled": True,
+    }.items() <= captured["feeds"][0].items()
 
 
 def test_crawl_fixed_panel_mode_skips_bandit_selection() -> None:
@@ -148,6 +159,13 @@ def test_crawl_fixed_panel_mode_skips_bandit_selection() -> None:
             ORDER BY outlet
             """
         ).fetchall()
+        run_row = db.init.get_conn().execute(
+            """
+            SELECT fetch_successful, fetch_failed, entries_seen, candidates,
+                   fetch_concurrency, feed_batch_size
+            FROM collection_runs
+            """
+        ).fetchone()
     finally:
         cleanup_temp_db(temp_dir)
 
@@ -156,6 +174,7 @@ def test_crawl_fixed_panel_mode_skips_bandit_selection() -> None:
     assert [row[0] for row in rows] == ["spiegel", "tagesschau"]
     assert all(row[1] == 0 for row in rows)
     assert all(row[2] == 0.0 for row in rows)
+    assert run_row == (0, 2, 0, 0, 4, 50)
 
 
 def test_same_article_can_map_to_multiple_topics_without_duplicate_article_rows() -> None:
@@ -191,7 +210,8 @@ def test_same_article_can_map_to_multiple_topics_without_duplicate_article_rows(
         ).fetchall()
         run_stats = conn.execute(
             """
-            SELECT inserted, accepted, duplicates
+            SELECT inserted, accepted, duplicates, fetch_successful, fetch_failed,
+                   entries_seen, candidates
             FROM collection_runs
             ORDER BY completed_at
             """
@@ -201,7 +221,7 @@ def test_same_article_can_map_to_multiple_topics_without_duplicate_article_rows(
 
     assert article_count == 1
     assert topic_links == [("ekonomika",), ("inflace",)]
-    assert run_stats == [(1, 1, 0), (0, 1, 1)]
+    assert run_stats == [(1, 1, 0, 1, 0, 1, 1), (0, 1, 1, 1, 0, 1, 1)]
 
 
 def test_alias_topics_share_canonical_article_links_without_duplicate_rows() -> None:

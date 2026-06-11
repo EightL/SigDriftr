@@ -340,6 +340,12 @@ def _ensure_collection_schema(conn: sqlite3.Connection) -> None:
             inserted         INTEGER NOT NULL DEFAULT 0,
             accepted         INTEGER NOT NULL DEFAULT 0,
             duplicates       INTEGER NOT NULL DEFAULT 0,
+            fetch_successful INTEGER NOT NULL DEFAULT 0,
+            fetch_failed     INTEGER NOT NULL DEFAULT 0,
+            entries_seen     INTEGER NOT NULL DEFAULT 0,
+            candidates       INTEGER NOT NULL DEFAULT 0,
+            fetch_concurrency INTEGER NOT NULL DEFAULT 0,
+            feed_batch_size  INTEGER NOT NULL DEFAULT 0,
             started_at       TEXT NOT NULL,
             completed_at     TEXT NOT NULL,
             duration_s       REAL NOT NULL DEFAULT 0.0
@@ -387,6 +393,15 @@ def _ensure_collection_schema(conn: sqlite3.Connection) -> None:
         ON collection_feed_stats(run_id, outlet)
         """
     )
+    for column_name, ddl in [
+        ("fetch_successful", "fetch_successful INTEGER NOT NULL DEFAULT 0"),
+        ("fetch_failed", "fetch_failed INTEGER NOT NULL DEFAULT 0"),
+        ("entries_seen", "entries_seen INTEGER NOT NULL DEFAULT 0"),
+        ("candidates", "candidates INTEGER NOT NULL DEFAULT 0"),
+        ("fetch_concurrency", "fetch_concurrency INTEGER NOT NULL DEFAULT 0"),
+        ("feed_batch_size", "feed_batch_size INTEGER NOT NULL DEFAULT 0"),
+    ]:
+        _add_column_if_missing(conn, "collection_runs", column_name, ddl)
 
 
 def _ensure_cluster_schema(conn: sqlite3.Connection) -> None:

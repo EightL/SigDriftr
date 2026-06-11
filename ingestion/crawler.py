@@ -25,6 +25,7 @@ from config.feeds import get_enabled_feeds
 from config.settings import (
     BANDIT_REWARD_MODE,
     COLLECTION_MODE,
+    CRAWL_BATCH_SIZE,
     CRAWL_FETCH_CONCURRENCY,
     CRAWL_FEED_TIMEOUT_SECONDS,
 )
@@ -81,7 +82,45 @@ class CrawlReport:
     started_at: str = ""
     completed_at: str = ""
     duration_s: float = 0.0
+    fetch_concurrency: int = CRAWL_FETCH_CONCURRENCY
+    feed_batch_size: int = CRAWL_BATCH_SIZE
     feed_stats: list[FeedCrawlStats] = field(default_factory=list)
+
+    @property
+    def fetch_successful(self) -> int:
+        return sum(1 for item in self.feed_stats if item.fetch_success)
+
+    @property
+    def fetch_failed(self) -> int:
+        return sum(1 for item in self.feed_stats if not item.fetch_success)
+
+    @property
+    def entries_seen(self) -> int:
+        return sum(item.entries_seen for item in self.feed_stats)
+
+    @property
+    def candidates(self) -> int:
+        return sum(item.candidates for item in self.feed_stats)
+
+    @property
+    def fetch_success_rate(self) -> float:
+        return _rate(self.fetch_successful, len(self.selected_feeds))
+
+    @property
+    def candidate_rate(self) -> float:
+        return _rate(self.candidates, self.entries_seen)
+
+    @property
+    def acceptance_rate(self) -> float:
+        return _rate(self.accepted, self.entries_seen)
+
+    @property
+    def duplicate_rate(self) -> float:
+        return _rate(self.duplicates, self.accepted)
+
+    @property
+    def accepted_per_second(self) -> float:
+        return _rate(self.accepted, self.duration_s)
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -97,6 +136,17 @@ class CrawlReport:
             "inserted": self.inserted,
             "accepted": self.accepted,
             "duplicates": self.duplicates,
+            "fetch_successful": self.fetch_successful,
+            "fetch_failed": self.fetch_failed,
+            "entries_seen": self.entries_seen,
+            "candidates": self.candidates,
+            "fetch_success_rate": self.fetch_success_rate,
+            "candidate_rate": self.candidate_rate,
+            "acceptance_rate": self.acceptance_rate,
+            "duplicate_rate": self.duplicate_rate,
+            "accepted_per_second": self.accepted_per_second,
+            "fetch_concurrency": self.fetch_concurrency,
+            "feed_batch_size": self.feed_batch_size,
             "started_at": self.started_at,
             "completed_at": self.completed_at,
             "duration_s": self.duration_s,
@@ -119,6 +169,12 @@ class CrawlReport:
                 for item in self.feed_stats
             ],
         }
+
+
+def _rate(numerator: float, denominator: float) -> float:
+    if denominator <= 0:
+        return 0.0
+    return round(float(numerator) / float(denominator), 4)
 
 
 @lru_cache(maxsize=1)
@@ -260,6 +316,11 @@ def _fetch_feed_bytes(url: str) -> bytes:
     return payload
 
 
+def _feed_batches(feeds: list[dict]):
+    for index in range(0, len(feeds), CRAWL_BATCH_SIZE):
+        yield feeds[index : index + CRAWL_BATCH_SIZE]
+
+
 def _fetch_article_body(url: str, fallback_summary: str) -> tuple[str, str]:
     try:
         payload, resolved_url = _fetch_url_bytes(url)
@@ -338,8 +399,10 @@ def _persist_crawl_report(conn, report: CrawlReport) -> None:
         INSERT OR REPLACE INTO collection_runs
         (run_id, topic, canonical_topic_id, country, source, collection_mode, reward_mode,
          eligible_feeds, selected_feeds, inserted, accepted, duplicates,
+         fetch_successful, fetch_failed, entries_seen, candidates,
+         fetch_concurrency, feed_batch_size,
          started_at, completed_at, duration_s)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             report.run_id,
@@ -354,6 +417,12 @@ def _persist_crawl_report(conn, report: CrawlReport) -> None:
             report.inserted,
             report.accepted,
             report.duplicates,
+            report.fetch_successful,
+            report.fetch_failed,
+            report.entries_seen,
+            report.candidates,
+            report.fetch_concurrency,
+            report.feed_batch_size,
             report.started_at,
             report.completed_at,
             report.duration_s,
@@ -491,11 +560,17 @@ async def _crawl_async_report(
         eligible_feeds=[str(feed.get("outlet", "")) for feed in available_feeds],
         selected_feeds=[str(feed.get("outlet", "")) for feed in selected_feeds],
         started_at=now.isoformat(),
+        fetch_concurrency=CRAWL_FETCH_CONCURRENCY,
+        feed_batch_size=CRAWL_BATCH_SIZE,
     )
     semaphore = asyncio.Semaphore(CRAWL_FETCH_CONCURRENCY)
-    parsed_feeds = await asyncio.gather(
-        *[_fetch_feed(feed, semaphore) for feed in selected_feeds]
-    )
+    parsed_feeds = []
+    for feed_batch in _feed_batches(selected_feeds):
+        parsed_feeds.extend(
+            await asyncio.gather(
+                *[_fetch_feed(feed, semaphore) for feed in feed_batch]
+            )
+        )
 
     for feed, parsed in parsed_feeds:
         stats = FeedCrawlStats(

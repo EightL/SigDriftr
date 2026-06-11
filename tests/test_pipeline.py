@@ -143,6 +143,7 @@ def build_explainer_payload(segment: str) -> dict[str, object]:
 
 
 def build_crawl_report(inserted: int) -> types.SimpleNamespace:
+    duration_s = 0.5 if inserted else 0.0
     feed_stats = [
         {
             "outlet": "irozhlas",
@@ -160,6 +161,23 @@ def build_crawl_report(inserted: int) -> types.SimpleNamespace:
             "error_message": None,
         }
     ]
+    report_dict = {
+        "fetch_successful": 1,
+        "fetch_failed": 0,
+        "entries_seen": inserted,
+        "candidates": inserted,
+        "fetch_success_rate": 1.0,
+        "candidate_rate": 1.0 if inserted else 0.0,
+        "acceptance_rate": 1.0 if inserted else 0.0,
+        "duplicate_rate": 0.0,
+        "accepted_per_second": round(inserted / duration_s, 4) if duration_s else 0.0,
+        "fetch_concurrency": 4,
+        "feed_batch_size": 50,
+        "started_at": "2026-01-01T00:00:00+00:00",
+        "completed_at": "2026-01-01T00:00:01+00:00",
+        "duration_s": duration_s,
+        "feed_stats": feed_stats,
+    }
     return types.SimpleNamespace(
         run_id="collect-test",
         topic="inflace",
@@ -172,7 +190,7 @@ def build_crawl_report(inserted: int) -> types.SimpleNamespace:
         inserted=inserted,
         accepted=inserted,
         duplicates=0,
-        to_dict=lambda: {"feed_stats": feed_stats},
+        to_dict=lambda: report_dict,
     )
 
 
@@ -212,6 +230,20 @@ def test_run_collection_cycle_chains_extract_and_rewards() -> None:
         "selected_feeds": ["irozhlas"],
         "accepted": 2,
         "duplicates": 0,
+        "fetch_successful": 1,
+        "fetch_failed": 0,
+        "entries_seen": 2,
+        "candidates": 2,
+        "fetch_success_rate": 1.0,
+        "candidate_rate": 1.0,
+        "acceptance_rate": 1.0,
+        "duplicate_rate": 0.0,
+        "accepted_per_second": 4.0,
+        "fetch_concurrency": 4,
+        "feed_batch_size": 50,
+        "started_at": "2026-01-01T00:00:00+00:00",
+        "completed_at": "2026-01-01T00:00:01+00:00",
+        "duration_s": 0.5,
         "feed_stats": build_crawl_report(2).to_dict()["feed_stats"],
     }
     mock_crawl.assert_awaited_once_with(
@@ -253,6 +285,20 @@ def test_run_collection_cycle_skips_extract_when_no_articles_are_inserted() -> N
         "selected_feeds": ["irozhlas"],
         "accepted": 0,
         "duplicates": 0,
+        "fetch_successful": 1,
+        "fetch_failed": 0,
+        "entries_seen": 0,
+        "candidates": 0,
+        "fetch_success_rate": 1.0,
+        "candidate_rate": 0.0,
+        "acceptance_rate": 0.0,
+        "duplicate_rate": 0.0,
+        "accepted_per_second": 0.0,
+        "fetch_concurrency": 4,
+        "feed_batch_size": 50,
+        "started_at": "2026-01-01T00:00:00+00:00",
+        "completed_at": "2026-01-01T00:00:01+00:00",
+        "duration_s": 0.0,
         "feed_stats": build_crawl_report(0).to_dict()["feed_stats"],
     }
     mock_crawl.assert_awaited_once_with(

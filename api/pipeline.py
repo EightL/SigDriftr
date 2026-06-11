@@ -252,6 +252,7 @@ async def run_collection_cycle(
     inserted = report.inserted
     processed = 0
     rewards_recorded = 0
+    report_dict = report.to_dict()
 
     if inserted > 0:
         from extraction.extractor import run_extraction
@@ -279,7 +280,21 @@ async def run_collection_cycle(
         "selected_feeds": report.selected_feeds,
         "accepted": report.accepted,
         "duplicates": report.duplicates,
-        "feed_stats": [item for item in report.to_dict()["feed_stats"]],
+        "fetch_successful": report_dict["fetch_successful"],
+        "fetch_failed": report_dict["fetch_failed"],
+        "entries_seen": report_dict["entries_seen"],
+        "candidates": report_dict["candidates"],
+        "fetch_success_rate": report_dict["fetch_success_rate"],
+        "candidate_rate": report_dict["candidate_rate"],
+        "acceptance_rate": report_dict["acceptance_rate"],
+        "duplicate_rate": report_dict["duplicate_rate"],
+        "accepted_per_second": report_dict["accepted_per_second"],
+        "fetch_concurrency": report_dict["fetch_concurrency"],
+        "feed_batch_size": report_dict["feed_batch_size"],
+        "started_at": report_dict["started_at"],
+        "completed_at": report_dict["completed_at"],
+        "duration_s": report_dict["duration_s"],
+        "feed_stats": [item for item in report_dict["feed_stats"]],
     }
 
 

@@ -1,0 +1,155 @@
+feeds:
+  - outlet: irozhlas
+    rss_url: https://www.irozhlas.cz/rss/irozhlas
+    affinity_tag: mainstream
+    country: CZ
+    language: cs
+    enabled: true
+    categories: [news, politics]
+  - outlet: irozhlas_eko
+    rss_url: https://www.irozhlas.cz/rss/irozhlas/section/ekonomika
+    affinity_tag: b2b
+    country: CZ
+    language: cs
+    enabled: true
+    categories: [economy, business]
+  - outlet: wave
+    rss_url: https://wave.rozhlas.cz/rss.xml
+    affinity_tag: young_urban
+    country: CZ
+    language: cs
+    enabled: true
+    categories: [culture, society]
+  - outlet: idnes
+    rss_url: https://servis.idnes.cz/rss.aspx
+    affinity_tag: mainstream
+    country: CZ
+    language: cs
+    enabled: true
+    categories: [news, politics]
+  - outlet: novinky
+    rss_url: https://www.novinky.cz/rss
+    affinity_tag: mainstream
+    country: CZ
+    language: cs
+    enabled: true
+    categories: [news, society]
+  - outlet: e15
+    rss_url: https://www.e15.cz/rss
+    affinity_tag: b2b
+    country: CZ
+    language: cs
+    enabled: true
+    categories: [economy, business]
+  - outlet: blesk
+    rss_url: https://www.blesk.cz/rss
+    affinity_tag: senior
+    country: CZ
+    language: cs
+    enabled: true
+    categories: [news, lifestyle]
+  - outlet: maminka
+    rss_url: https://www.maminka.cz/rss
+    affinity_tag: family
+    country: CZ
+    language: cs
+    enabled: true
+    categories: [family, lifestyle]
+  - outlet: ct24
+    rss_url: https://ct24.ceskatelevize.cz/rss/hlavni-zpravy
+    affinity_tag: mainstream
+    country: CZ
+    language: cs
+    enabled: true
+    categories: [news, politics]
+  - outlet: tagesschau
+    rss_url: https://www.tagesschau.de/xml/rss2
+    affinity_tag: mainstream
+    country: DE
+    language: de
+    enabled: true
+    categories: [news, politics]
+  - outlet: spiegel
+    rss_url: https://www.spiegel.de/schlagzeilen/index.rss
+    affinity_tag: mainstream
+    country: DE
+    language: de
+    enabled: true
+    categories: [news, politics]
+  - outlet: spiegel_tops
+    rss_url: https://www.spiegel.de/schlagzeilen/tops/index.rss
+    affinity_tag: mainstream
+    country: DE
+    language: de
+    enabled: true
+    categories: [news, politics]
+  - outlet: faz
+    rss_url: https://www.faz.net/rss/aktuell/
+    affinity_tag: mainstream
+    country: DE
+    language: de
+    enabled: true
+    categories: [news, politics]
+  - outlet: sueddeutsche
+    rss_url: https://rss.sueddeutsche.de/rss/Topthemen
+    affinity_tag: mainstream
+    country: DE
+    language: de
+    enabled: true
+    categories: [news, politics]
+  - outlet: zeit_index
+    rss_url: https://newsfeed.zeit.de/index
+    affinity_tag: mainstream
+    country: DE
+    language: de
+    enabled: true
+    categories: [news, politics]
+  - outlet: zeit_all
+    rss_url: https://newsfeed.zeit.de/all
+    affinity_tag: mainstream
+    country: DE
+    language: de
+    enabled: true
+    categories: [news, politics]
+  - outlet: welt
+    rss_url: https://www.welt.de/?service=Rss
+    affinity_tag: mainstream
+    country: DE
+    language: de
+    enabled: true
+    categories: [news, politics]
+  - outlet: bbc_world
+    rss_url: http://feeds.bbci.co.uk/news/world/rss.xml
+    affinity_tag: mainstream
+    country: GLOBAL
+    language: en
+    enabled: true
+    categories: [news, international]
+  - outlet: reuters_world
+    rss_url: https://feeds.reuters.com/Reuters/worldNews
+    affinity_tag: mainstream
+    country: GLOBAL
+    language: en
+    enabled: true
+    categories: [news, international]
+  - outlet: nytimes
+    rss_url: https://rss.nytimes.com/services/xml/rss/nyt/World.xml
+    affinity_tag: mainstream
+    country: GLOBAL
+    language: en
+    enabled: true
+    categories: [news, international]
+  - outlet: the_guardian
+    rss_url: https://www.theguardian.com/world/rss
+    affinity_tag: mainstream
+    country: GLOBAL
+    language: en
+    enabled: true
+    categories: [news, international]
+  - outlet: cnn
+    rss_url: http://rss.cnn.com/rss/cnn_world.rss
+    affinity_tag: mainstream
+    country: GLOBAL
+    language: en
+    enabled: true
+    categories: [news, international]
